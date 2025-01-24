@@ -10,7 +10,7 @@
     <description>RotatingWingV3J</description>
 
     <firmware name="rotorcraft">
-        <target name="ap" board="cube_orangeplus">
+        <target name="ap" board="cube_orange">
             <configure name="PERIODIC_FREQUENCY" value="500"/> <!-- Configure the main periodic frequency to 500Hz -->
 
             <module name="radio_control" type="sbus">
@@ -64,6 +64,7 @@
         <!-- Herelink datalink -->
         <module name="telemetry" type="transparent">
             <configure name="MODEM_BAUD" value="B460800"/>
+            <!-- <configure name="MODEM_PORT" value="usb_serial"/>  -->
         </module>
 
         <!-- Sensors -->
@@ -359,7 +360,18 @@
     </section>
 
     <section name="IMU" prefix="IMU_">
-        <define name="ACCEL_CALIB" value="{{.abi_id=20, .calibrated={.neutral=true, .scale=true, .filter=true},.neutral={-19,0,11}, .scale={{36573,4111,12385},{3737,420,1269}}, .filter_sample_freq=1130, .filter_freq=30}, {.abi_id=21, .calibrated={.neutral=true, .scale=true},.neutral={-1,-5,24}, .scale={{21205,53606,11977},{4326,10919,2440}}}, {.abi_id=22, .calibrated={.neutral=true, .scale=true},.neutral={-63,-14,21}, .scale={{32790,18121,37501},{6697,3698,7659}}}}"/>
+        <define name="IMU_ACCEL_CALIB" type="array">
+            <field type="struct">
+                <field name="abi_id" value="20"/>
+                <field name="calibrated" type="struct">
+                <field name="neutral" value="true"/>
+                <field name="scale" value="true"/>
+                </field>
+                <field name="neutral" value="-20,-7,17" type="int[]"/>
+                <field name="scale" value="{{37491,17033,10437},{3830,1737,1075}}"/>
+            </field>
+        </define>
+        
         <define name="MAG_CALIB" value="{{.abi_id=5, .calibrated={.neutral=true, .scale=true, .rotation=true},.neutral={11770,9014,-7862}, .scale={{1879,14000,16295},{3057,25229,28216}}, .body_to_sensor={{0,16384,0,16384,0,0,0,0,-16384}}}}"/>
         <define name="GYRO_CALIB"  value="{{.abi_id=20, .calibrated={.filter=true}, .filter_sample_freq=1130, .filter_freq=30}}"/>
 

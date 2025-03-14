@@ -25,6 +25,15 @@
  // Functions to be used externally
  extern void orange_avoider_pf_init(void);     // Initialization function
  extern void orange_avoider_pf_periodic(void); // Periodic function for control logic
+
+ // Function prototypes
+ void orange_avoider_pf_init(void);
+ void orange_avoider_pf_periodic(void);
+ float compute_repulsive_adjustment(int32_t color_threshold);
+ float fallback_increment_if_no_repulsion(float repulsive_adj);
+ void increase_nav_heading(float incrementDegrees);
+ void moveWaypointForward(uint8_t waypoint, float distanceMeters);
+
  
  #endif /* ORANGE_AVOIDER_PF_H */
  

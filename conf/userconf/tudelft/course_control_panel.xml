@@ -48,6 +48,25 @@
         <arg flag="-d" constant="0"/>
       </program>
       <program name="NatNet3">
+        <arg flag="-ac" constant="12"/>
+        <arg flag="44"/>
+        <arg flag="-xa" constant="57"/>
+        <arg flag="-an" constant="far"/>
+        <arg flag="-le" constant="far"/>
+      </program>
+      <program name="Data Link">
+        <arg flag="-udp"/>
+      </program>
+      <program name="Server"/>
+      <program name="GCS">
+        <arg flag="-speech"/>
+      </program>
+      <program name="Joystick">
+        <arg flag="-ac" constant="bebop_orange_avoid_pf"/>
+        <arg flag="sm600.xml"/>
+        <arg flag="-d" constant="0"/>
+      </program>
+      <program name="NatNet3">
         <arg flag="-ac" constant="9"/>
         <arg flag="44"/>
         <arg flag="-xa" constant="57"/>
@@ -82,6 +101,27 @@
         <arg flag="-d 0"/>
       </program>
       <program name="Gazebo"/>
+    </session>
+    <session name="flight112">
+      <program name="Data Link">
+        <arg flag="-udp"/>
+      </program>
+      <program name="Server"/>
+      <program name="GCS">
+        <arg flag="-speech"/>
+      </program>
+      <program name="Joystick">
+        <arg flag="-ac" constant="bebop_orange_avoid_pf"/>
+        <arg flag="sm600.xml"/>
+        <arg flag="-d" constant="0"/>
+      </program>
+      <program name="NatNet3">
+        <arg flag="-ac" constant="9"/>
+        <arg flag="44"/>
+        <arg flag="-xa" constant="57"/>
+        <arg flag="-an" constant="far"/>
+        <arg flag="-le" constant="far"/>
+      </program>
     </session>
   </section>
 </control_panel>

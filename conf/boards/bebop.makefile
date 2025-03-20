@@ -49,3 +49,7 @@ BARO_LED            ?= none
 AHRS_ALIGNER_LED    ?= 1
 GPS_LED             ?= none
 SYS_TIME_LED        ?= 0
+
+# Add ONNX Runtime include directory and link flags
+$(TARGET).CFLAGS += -I/usr/local/include
+$(TARGET).LDFLAGS += -L/usr/local/lib -lonnxruntime

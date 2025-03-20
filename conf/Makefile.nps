@@ -128,3 +128,8 @@ DEPS = $(addprefix $(OBJDIR)/,$($(TARGET).srcs:.c=.d))
 DEPS += $(addprefix $(OBJDIR)/,$($(TARGET).srcs:.cpp=.d))
 -include $(DEPS)
 endif
+
+# Add ONNX Runtime include directory and link flags
+$(TARGET).CFLAGS += -I/usr/local/include
+$(TARGET).LDFLAGS += -L/usr/local/lib -lonnxruntime
+

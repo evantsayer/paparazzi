@@ -120,6 +120,7 @@ void map_grid_to_polar_histogram(GridHistogramCell *grid[N_X_GRIDS][N_Y_GRIDS], 
     }
 }
 
+// Smoothing function for the polar histogram
 void smooth_polar_histogram(PolarHistogram *polar, int smoothing_radius) {
     /**
      * Function smoothing the polar histogram
@@ -138,22 +139,6 @@ void smooth_polar_histogram(PolarHistogram *polar, int smoothing_radius) {
         }
         polar->polar_obstacle_density = smoothened_density/(2*smoothing_radius + 1)
     }
-}
-
-// Smooth the polar histogram using a moving average filter
-void smooth_histogram() {
-    PolarCell smoothed[ANGLE_BINS];
-    memcpy(smoothed, polar_grid, sizeof(polar_grid));
-    
-    for (int i = SMOOTHING_WINDOW; i < ANGLE_BINS - SMOOTHING_WINDOW; i++) {
-        double sum = 0;
-        for (int j = -SMOOTHING_WINDOW; j <= SMOOTHING_WINDOW; j++) {
-            sum += polar_grid[i + j].potential;
-        }
-        smoothed[i].potential = sum / (2 * SMOOTHING_WINDOW + 1);
-    }
-    
-    memcpy(polar_grid, smoothed, sizeof(polar_grid));
 }
 
 // Identify candidate directions where obstacle density is low
@@ -192,6 +177,52 @@ float find_best_direction(Point* position, Point* target, PolarHistogram* polar)
     }
     return best_angle;
 }
+
+// Calculate max safe distance in direction
+float get_max_safe_distance(Point* position, float direction) {
+
+    Point p0;
+    p0.x = depth*cos(alpha_min);
+    p0.y = depth*sin(alpha_min);
+    float max_distance;
+    float current_safety = infinity;
+    while (OBSTACLE_THRESHOLD < current_safety || max_distance < distance_to_safety_barrier ) {
+
+    }
+    alpha_min = image[i].alpha_min;
+    alpha_max = image[i].alpha_max;
+    depth = image[i].depth;
+
+    
+    p1.x = depth*cos(alpha_max);
+    p1.y = depth*sin(alpha_max);
+
+    // Apply Braham's algorithm to draw line between two sector separator points
+    //TODO: test this algo, expecially for negative values
+    int discrete_x0 = (int)(p0.x/CELL_X_WIDTH);
+    int discrete_y0 = (int)(p0.y/CELL_Y_WIDTH);
+    int discrete_x1 = (int)(p1.x/CELL_X_WIDTH);
+    int discrete_y1 = (int)(p1.y/CELL_Y_WIDTH);
+
+    int dx = discrete_x1 - discrete_x0;
+    int dy = discrete_y1 - discrete_y0;
+    float D = 2*dy - dx;
+    int y = discrete_y0;
+
+    int x_steps = (int)(dx/CELL_X_WIDTH);
+    int y_steps = (int)(dy/CELL_Y_WIDTH);
+
+    for (int j=discrete_x0; j<discrete_x0+x_steps; j++) {
+        grid[discrete_x0+j][y].confidance += ;
+        if (D > 0) {
+            y += 1;
+            D -= 2*dx;
+        }
+        D += 2*dy;
+    }
+}
+
+Point get_multiple_waypoints() {}
 
 void scan_field() {
     return;

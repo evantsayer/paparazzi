@@ -3,7 +3,7 @@
 #include <math.h>
 #include <string.h>
 #include <math.h>
-#include "firmwares/rotorcraft/navigation.h"
+//#include "firmwares/rotorcraft/navigation.h"
 
 #define N_X_GRIDS 50 
 #define N_Y_GRIDS 50
@@ -22,7 +22,7 @@ enum PlanningState {
     OBSTACLE_FOUND,
     SEARCH_FOR_SAFE_HEADING,
     OUT_OF_BOUNDS
-}
+};
 
 typedef struct {
     float x;
@@ -50,6 +50,7 @@ typedef struct {
 
 // Define global variables
 GridHistogramCell grid[N_X_GRIDS][N_Y_GRIDS];
+for ()
 memset(grid, 0, sizeof(grid));
 PolarHistogram polar;
 
@@ -66,7 +67,8 @@ void update_grid_histogram(GridHistogramCell *grid[N_X_GRIDS][N_Y_GRIDS], Stripe
         alpha_min = image[i].alpha_min;
         alpha_max = image[i].alpha_max;
         depth = image[i].depth;
-
+        
+        //TODO: ADD CURRENT POSITION!!!!!!
         p0.x = depth*cos(alpha_min);
         p0.y = depth*sin(alpha_min);
         p1.x = depth*cos(alpha_max);
@@ -182,43 +184,40 @@ float find_best_direction(Point* position, Point* target, PolarHistogram* polar)
 float get_max_safe_distance(Point* position, float direction) {
 
     Point p0;
+    Point p1:
+    //TODO: CHANGE IT TO CURRENT POSITION!!!!!!
     p0.x = depth*cos(alpha_min);
     p0.y = depth*sin(alpha_min);
-    float max_distance;
-    float current_safety = infinity;
-    while (OBSTACLE_THRESHOLD < current_safety || max_distance < distance_to_safety_barrier ) {
-
-    }
-    alpha_min = image[i].alpha_min;
-    alpha_max = image[i].alpha_max;
-    depth = image[i].depth;
-
-    
-    p1.x = depth*cos(alpha_max);
-    p1.y = depth*sin(alpha_max);
-
-    // Apply Braham's algorithm to draw line between two sector separator points
-    //TODO: test this algo, expecially for negative values
     int discrete_x0 = (int)(p0.x/CELL_X_WIDTH);
     int discrete_y0 = (int)(p0.y/CELL_Y_WIDTH);
-    int discrete_x1 = (int)(p1.x/CELL_X_WIDTH);
-    int discrete_y1 = (int)(p1.y/CELL_Y_WIDTH);
+    float max_distance = 0;
+    double current_safety = infinity();
+    while (OBSTACLE_THRESHOLD < current_safety || max_distance < distance_to_safety_barrier ) {
+        
+        p1.x = distance_to_safety_barrier*cos(direction);
+        p1.y = distance_to_safety_barrier*sin(direction);
 
-    int dx = discrete_x1 - discrete_x0;
-    int dy = discrete_y1 - discrete_y0;
-    float D = 2*dy - dx;
-    int y = discrete_y0;
+        // Apply Braham's algorithm to draw line between two sector separator points
+        //TODO: test this algo, expecially for negative values
+        int discrete_x1 = (int)(p1.x/CELL_X_WIDTH);
+        int discrete_y1 = (int)(p1.y/CELL_Y_WIDTH);
 
-    int x_steps = (int)(dx/CELL_X_WIDTH);
-    int y_steps = (int)(dy/CELL_Y_WIDTH);
+        int dx = discrete_x1 - discrete_x0;
+        int dy = discrete_y1 - discrete_y0;
+        float D = 2*dy - dx;
+        int y = discrete_y0;
 
-    for (int j=discrete_x0; j<discrete_x0+x_steps; j++) {
-        grid[discrete_x0+j][y].confidance += ;
-        if (D > 0) {
-            y += 1;
-            D -= 2*dx;
+        int x_steps = (int)(dx/CELL_X_WIDTH);
+        int y_steps = (int)(dy/CELL_Y_WIDTH);
+
+        for (int j=discrete_x0; j<discrete_x0+x_steps; j++) {
+            current_safety = grid[discrete_x0+j][y].confidance;
+            if (D > 0) {
+                y += 1;
+                D -= 2*dx;
+            }
+            D += 2*dy;
         }
-        D += 2*dy;
     }
 }
 

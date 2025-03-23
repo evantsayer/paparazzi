@@ -10,8 +10,8 @@
  * 
  */
 
- #ifndef ORANGE_AVOIDER_PF_H
- #define ORANGE_AVOIDER_PF_H
+ #ifndef ORANGE_AVOIDER_PF_H      // I don't know what this is for. 
+ #define ORANGE_AVOIDER_PF_H      // THESE NEED TO BE UPDATED
  
  // Include necessary libraries
  #include "state.h"
@@ -21,6 +21,8 @@
  extern float oa_color_count_frac;  // Threshold fraction for orange pixel detection
  extern float maxDistance;          // Max waypoint movement distance
  extern float k_rep;                // Gain factor for repulsive force computation
+ extern float k_max;                // Gain factor for testing
+
  
  // Functions to be used externally
  extern void orange_avoider_polar_init(void);     // Initialization function

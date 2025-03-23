@@ -53,7 +53,7 @@ static pthread_mutex_t mutex;
 #endif
 
 // Filter Settings
-uint8_t cod_lum_min1 = 0;
+uint8_t cod_lum_min1 = 0;     // Ranges for detecting a colour as orange - two different filters can be computed
 uint8_t cod_lum_max1 = 0;
 uint8_t cod_cb_min1 = 0;
 uint8_t cod_cb_max1 = 0;
@@ -67,8 +67,8 @@ uint8_t cod_cb_max2 = 0;
 uint8_t cod_cr_min2 = 0;
 uint8_t cod_cr_max2 = 0;
 
-bool cod_draw1 = false;
-bool cod_draw2 = false;
+bool cod_draw1 = true;
+bool cod_draw2 = true;
 
 // define global variables
 struct color_object_t {
@@ -206,55 +206,247 @@ void color_object_detector_init(void)
  * @param draw - whether or not to draw on image
  * @return number of pixels of image within the filter bounds.
  */
-uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc, bool draw,
-                              uint8_t lum_min, uint8_t lum_max,
-                              uint8_t cb_min, uint8_t cb_max,
-                              uint8_t cr_min, uint8_t cr_max)
-{
-  uint32_t cnt = 0;
-  uint32_t tot_x = 0;
-  uint32_t tot_y = 0;
-  uint8_t *buffer = img->buf;
 
-  // Go through all the pixels
-  for (uint16_t y = 0; y < img->h; y++) {
-    for (uint16_t x = 0; x < img->w; x ++) {
-      // Check if the color is inside the specified values
-      uint8_t *yp, *up, *vp;
-      if (x % 2 == 0) {
-        // Even x
-        up = &buffer[y * 2 * img->w + 2 * x];      // U
-        yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y1
-        vp = &buffer[y * 2 * img->w + 2 * x + 2];  // V
-        //yp = &buffer[y * 2 * img->w + 2 * x + 3]; // Y2
-      } else {
-        // Uneven x
-        up = &buffer[y * 2 * img->w + 2 * x - 2];  // U
-        //yp = &buffer[y * 2 * img->w + 2 * x - 1]; // Y1
-        vp = &buffer[y * 2 * img->w + 2 * x];      // V
-        yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y2
-      }
-      if ( (*yp >= lum_min) && (*yp <= lum_max) &&
-           (*up >= cb_min ) && (*up <= cb_max ) &&
-           (*vp >= cr_min ) && (*vp <= cr_max )) {
-        cnt ++;
-        tot_x += x;
-        tot_y += y;
-        if (draw){
-          *yp = 255;  // make pixel brighter in image
-        }
-      }
-    }
-  }
-  if (cnt > 0) {
-    *p_xc = (int32_t)roundf(tot_x / ((float) cnt) - img->w * 0.5f);
-    *p_yc = (int32_t)roundf(img->h * 0.5f - tot_y / ((float) cnt));
-  } else {
-    *p_xc = 0;
-    *p_yc = 0;
-  }
-  return cnt;
+
+
+//# modify this 
+
+// uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc, bool draw,
+//                               uint8_t lum_min, uint8_t lum_max,
+//                               uint8_t cb_min, uint8_t cb_max,
+//                               uint8_t cr_min, uint8_t cr_max)
+// {
+//   uint32_t cnt = 0;
+//   uint32_t tot_x = 0;
+//   uint32_t tot_y = 0;
+//   uint8_t *buffer = img->buf;
+
+//   // Go through all the pixels
+//   for (uint16_t y = 0; y < img->h; y++) {
+//     for (uint16_t x = 0; x < img->w; x ++) {
+//       // Check if the color is inside the specified values
+//       uint8_t *yp, *up, *vp;
+//       if (x % 2 == 0) {
+//         // Even x
+//         up = &buffer[y * 2 * img->w + 2 * x];      // U
+//         yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y1
+//         vp = &buffer[y * 2 * img->w + 2 * x + 2];  // V
+//         //yp = &buffer[y * 2 * img->w + 2 * x + 3]; // Y2
+//       } else {
+//         // Uneven x
+//         up = &buffer[y * 2 * img->w + 2 * x - 2];  // U
+//         //yp = &buffer[y * 2 * img->w + 2 * x - 1]; // Y1
+//         vp = &buffer[y * 2 * img->w + 2 * x];      // V
+//         yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y2
+//       }
+//       if ( (*yp >= lum_min) && (*yp <= lum_max) &&
+//            (*up >= cb_min ) && (*up <= cb_max ) &&
+//            (*vp >= cr_min ) && (*vp <= cr_max )) {
+//         cnt ++;
+//         tot_x += x;
+//         tot_y += y;
+//         if (draw){
+//           *yp = 255;  // make pixel brighter in image
+//         }
+//       }
+//     }
+//   }
+//   if (cnt > 0) {
+//     *p_xc = (int32_t)roundf(tot_x / ((float) cnt) - img->w * 0.5f);
+//     *p_yc = (int32_t)roundf(img->h * 0.5f - tot_y / ((float) cnt));
+//   } else {
+//     *p_xc = 0;
+//     *p_yc = 0;
+//   }
+//   return cnt;
+// }
+
+
+// Draws a green bounding box on the obstacle
+// uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc, bool draw,
+//   uint8_t lum_min, uint8_t lum_max,
+//   uint8_t cb_min, uint8_t cb_max,
+//   uint8_t cr_min, uint8_t cr_max)
+// {
+// uint32_t cnt = 0;
+// uint32_t tot_x = 0;
+// uint32_t tot_y = 0;
+// uint8_t *buffer = img->buf;
+
+// uint16_t min_x = img->w - 1;
+// uint16_t max_x = 0;
+// uint16_t min_y = img->h - 1;
+// uint16_t max_y = 0;
+
+// // Go through all the pixels
+// for (uint16_t y = 0; y < img->h; y++) {
+// for (uint16_t x = 0; x < img->w; x++) {
+// uint8_t *yp, *up, *vp;
+// if (x % 2 == 0) {
+// up = &buffer[y * 2 * img->w + 2 * x];      // U
+// yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y1
+// vp = &buffer[y * 2 * img->w + 2 * x + 2];  // V
+// } else {
+// up = &buffer[y * 2 * img->w + 2 * x - 2];  // U
+// vp = &buffer[y * 2 * img->w + 2 * x];      // V
+// yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y2
+// }
+
+// if ((*yp >= lum_min) && (*yp <= lum_max) &&
+// (*up >= cb_min) && (*up <= cb_max) &&
+// (*vp >= cr_min) && (*vp <= cr_max)) {
+// cnt++;
+// tot_x += x;
+// tot_y += y;
+
+// if (x < min_x) min_x = x;
+// if (x > max_x) max_x = x;
+// if (y < min_y) min_y = y;
+// if (y > max_y) max_y = y;
+
+// if (draw) {
+// *yp = 255;  // brighten pixel for feedback
+// }
+// }
+// }
+// }
+
+// if (cnt > 0) {
+// *p_xc = (int32_t)roundf(tot_x / ((float)cnt) - img->w * 0.5f);
+// *p_yc = (int32_t)roundf(img->h * 0.5f - tot_y / ((float)cnt));
+
+// if (draw) {
+// // Draw bounding box in bright green
+// for (uint16_t x = min_x; x <= max_x; x++) {
+// // Top
+// uint8_t *top = &buffer[min_y * 2 * img->w + 2 * x + 1];
+// *top = 255; *(top - 1) = 0; *(top + 1) = 0;
+// // Bottom
+// uint8_t *bottom = &buffer[max_y * 2 * img->w + 2 * x + 1];
+// *bottom = 255; *(bottom - 1) = 0; *(bottom + 1) = 0;
+// }
+// for (uint16_t y = min_y; y <= max_y; y++) {
+// // Left
+// uint8_t *left = &buffer[y * 2 * img->w + 2 * min_x + 1];
+// *left = 255; *(left - 1) = 0; *(left + 1) = 0;
+// // Right
+// uint8_t *right = &buffer[y * 2 * img->w + 2 * max_x + 1];
+// *right = 255; *(right - 1) = 0; *(right + 1) = 0;
+// }
+// }
+
+// } else {
+// *p_xc = 0;
+// *p_yc = 0;
+// }
+
+// return cnt;
+// }
+
+
+
+uint32_t find_object_centroid(struct image_t *img, int32_t* p_xc, int32_t* p_yc, bool draw,
+  uint8_t lum_min, uint8_t lum_max,
+  uint8_t cb_min, uint8_t cb_max,
+  uint8_t cr_min, uint8_t cr_max)
+{
+uint32_t cnt = 0;
+uint32_t tot_x = 0;
+uint32_t tot_y = 0;
+uint8_t *buffer = img->buf;
+
+uint16_t min_x = img->w - 1;
+uint16_t max_x = 0;
+uint16_t min_y = img->h - 1;
+uint16_t max_y = 0;
+
+for (uint16_t y = 0; y < img->h; y++) {
+for (uint16_t x = 0; x < img->w; x++) {
+uint8_t *yp, *up, *vp;
+if (x % 2 == 0) {
+up = &buffer[y * 2 * img->w + 2 * x];      // U
+yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y1
+vp = &buffer[y * 2 * img->w + 2 * x + 2];  // V
+} else {
+up = &buffer[y * 2 * img->w + 2 * x - 2];  // U
+vp = &buffer[y * 2 * img->w + 2 * x];      // V
+yp = &buffer[y * 2 * img->w + 2 * x + 1];  // Y2
 }
+
+if ((*yp >= lum_min) && (*yp <= lum_max) &&
+(*up >= cb_min) && (*up <= cb_max) &&
+(*vp >= cr_min) && (*vp <= cr_max)) {
+cnt++;
+tot_x += x;
+tot_y += y;
+
+if (x < min_x) min_x = x;
+if (x > max_x) max_x = x;
+if (y < min_y) min_y = y;
+if (y > max_y) max_y = y;
+
+if (draw) {
+*yp = 255;
+}
+}
+}
+}
+
+if (cnt > 0) {
+int xc = (int32_t)roundf(tot_x / ((float)cnt));
+int yc = (int32_t)roundf(tot_y / ((float)cnt));
+*p_xc = xc - img->w / 2;
+*p_yc = img->h / 2 - yc;
+
+if (draw) {
+// === Draw bounding box ===
+for (uint16_t x = min_x; x <= max_x; x++) {
+// Top
+uint8_t *top = &buffer[min_y * 2 * img->w + 2 * x + 1];
+*top = 255; *(top - 1) = 0; *(top + 1) = 0;
+// Bottom
+uint8_t *bottom = &buffer[max_y * 2 * img->w + 2 * x + 1];
+*bottom = 255; *(bottom - 1) = 0; *(bottom + 1) = 0;
+}
+for (uint16_t y = min_y; y <= max_y; y++) {
+// Left
+uint8_t *left = &buffer[y * 2 * img->w + 2 * min_x + 1];
+*left = 255; *(left - 1) = 0; *(left + 1) = 0;
+// Right
+uint8_t *right = &buffer[y * 2 * img->w + 2 * max_x + 1];
+*right = 255; *(right - 1) = 0; *(right + 1) = 0;
+}
+
+// === Draw red crosshair at centroid ===
+const int cross_size = 5;
+for (int dx = -cross_size; dx <= cross_size; dx++) {
+int cx = xc + dx;
+if (cx >= 0 && cx < img->w) {
+uint8_t *p = &buffer[yc * 2 * img->w + 2 * cx + 1];
+*p = 255; *(p - 1) = 0; *(p + 1) = 255;  // Bright red in YUV
+}
+}
+for (int dy = -cross_size; dy <= cross_size; dy++) {
+int cy = yc + dy;
+if (cy >= 0 && cy < img->h) {
+uint8_t *p = &buffer[cy * 2 * img->w + 2 * xc + 1];
+*p = 255; *(p - 1) = 0; *(p + 1) = 255;
+}
+}
+}
+
+} else {
+*p_xc = 0;
+*p_yc = 0;
+}
+
+return cnt;
+}
+
+
+
+
+
 
 void color_object_detector_periodic(void)
 {

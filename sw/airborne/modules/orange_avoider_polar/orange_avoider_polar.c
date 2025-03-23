@@ -12,6 +12,7 @@
 
 // ---------------- Global Variables (Declared in Header) ----------------
 float k_rep = 40.0f;
+float k_max = 1.0f;
 float maxDistance = 1.50f;
 float oa_color_count_frac = 0.15f; //Percent of pixels that must be orange for an obstacle to be flagged
 
@@ -87,6 +88,7 @@ void orange_avoider_polar_periodic(void)
       break;
 
     case OBSTACLE_FOUND:
+    printf("ME CHOCO");
       waypoint_move_here_2d(WP_GOAL);
       waypoint_move_here_2d(WP_RETREAT);
       waypoint_move_here_2d(WP_TRAJECTORY);
@@ -101,6 +103,7 @@ void orange_avoider_polar_periodic(void)
 
     case OUT_OF_BOUNDS:
       increase_nav_heading(fallback_increment_if_no_repulsion(repulsive_adj));
+      printf("THE WAYPOINT IS OUT OF BOUNDS");
       moveWaypointForward(WP_TRAJECTORY, 1.5f);
       moveWaypointForward(WP_RETREAT, -1.0f);
 
@@ -119,7 +122,7 @@ float compute_repulsive_adjustment(int32_t color_threshold)
 
   float repulsive_magnitude = ((color_count - color_threshold) * (1.0f / color_threshold));
   float offset = (front_camera.output_size.w * 0.5f - obstacle_center_x) * (1.0f / (front_camera.output_size.w * 0.5f));
-  return k_rep * repulsive_magnitude * offset;
+  return k_rep * k_max * repulsive_magnitude * offset;
 }
 
 float fallback_increment_if_no_repulsion(float repulsive_adj)

@@ -1,0 +1,42 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="orange_avoider_polar">
+  <doc>
+    <description>
+This module is an alternative to the original orange avoider for the course AE4317 Autonomous Flight of Micro Air Vehicles at TU Delft.
+It uses a potential fields method for obstacle avoidance instead of a state machine.
+The module processes the outputs of the color filter to compute a repulsive heading adjustment
+(based on the detected number and location of orange pixels) and updates the drone's heading.
+It also moves waypoints forward when the path is clear.
+
+The color filter settings are set using the cv_detect_color_object. This module can run multiple filters simultaneously,
+so you have to define which filter to use with the ORANGE_AVOIDER_PF_VISUAL_DETECTION_ID setting.
+    </description>
+    <define name="ORANGE_AVOIDER_PF_VISUAL_DETECTION_ID" value="ABI_BROADCAST" description="which VISUAL_DETECTION message to receive for orange pole detection."/>
+  </doc>
+
+  <settings>
+    <dl_settings>
+      <dl_settings name="OrangeAvoiderPF">
+         <dl_setting var="oa_color_count_frac" min="0" step="0.01" max="0.5"/>
+         <dl_setting var="maxDistance" min="0" step="0.1" max="10"/>
+         <dl_setting var="k_rep" min="0" step="0.5" max="50"/>
+      </dl_settings>
+    </dl_settings>
+  </settings>
+  
+  <dep>
+    <depends>cv_detect_color_object, navigation</depends>
+  </dep>
+
+  <header>
+    <file name="orange_avoider_polar.h"/>
+  </header>
+
+  <init fun="orange_avoider_polar_init()"/>
+  <periodic fun="orange_avoider_polar_periodic()" freq="4"/>
+
+  <makefile target="ap|nps">
+    <file name="orange_avoider_polar.c"/>
+  </makefile>
+</module>

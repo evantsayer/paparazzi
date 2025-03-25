@@ -132,4 +132,3 @@ endif
 # Add ONNX Runtime include directory and link flags
 $(TARGET).CFLAGS += -I/usr/local/include
 $(TARGET).LDFLAGS += -L/usr/local/lib -lonnxruntime
-

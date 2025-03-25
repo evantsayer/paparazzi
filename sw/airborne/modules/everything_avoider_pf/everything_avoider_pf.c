@@ -1,54 +1,51 @@
 /*
  * everything_avoider_pf.c
  *
- * This updated module integrates an ONNX-based neural network depth model
- * (exported from PyTorch as "depth_model.onnx") to compute a depth map from the
- * drone's front camera. The module obtains the latest video frame via a video
- * callback, converts the raw UYVY image into a normalized float tensor with shape
- * [1, 3, 130, 60] (batch, channels, height, width) – here, both dimensions are the
- * original dimensions divided by 4 – runs inference, and then processes the depth map
- * to detect obstacles based on high-valued (red) pixels. The resulting obstacle information
- * is used in a potential fields algorithm to adjust the drone's navigation.
+ * Updated module using a new ONNX-based model.
+ * The new model resizes the image to 60x130 then crops off the left part,
+ * yielding a final input tensor of shape [1, 3, 130, 40] (interpreted as [1, 130, 40, 3]
+ * by the ONNX model). The model outputs a single float in [0,1] indicating a normalized
+ * desired direction (0 = far left, 0.5 = straight ahead, 1 = far right).
  *
- * Note: Ensure that ONNX Runtime and the Paparazzi video libraries are properly linked.
+ * The NN output is used to update the drone’s heading and waypoints.
  */
 
- #include "modules/everything_avoider_pf/everything_avoider_pf.h" // Header file (name kept for consistency)
+ #include <pthread.h>
+ #include "modules/everything_avoider_pf/everything_avoider_pf.h"
  #include "firmwares/rotorcraft/navigation.h"
  #include "generated/airframe.h"
  #include "state.h"
  #include "modules/core/abi.h"
  #include "generated/flight_plan.h"
- 
  #include <time.h>
  #include <stdio.h>
  #include <stdlib.h>
  #include <string.h>
  #include <math.h>
- 
- /* ONNX Runtime header */
+ #include <sys/stat.h>
+ #include <sys/types.h>
  #include "onnxruntime_c_api.h"
- 
- /* For video handling: include the image structure definition */
  #include "lib/vision/image.h"  // Defines struct image_t
+
+ #define NAV_C
  
- /* ---------------- Global Variables for Potential Fields ---------------- */
- float k_rep = 40.0f;
- float maxDistance = 1.50f;
- float oa_color_count_frac = 0.15f; // Now represents the threshold fraction for red (obstacle) pixel detection
+ #define EVERYTHING_AVOIDER_VERBOSE TRUE
+ #define PRINT(string, ...) fprintf(stderr, "[everything_avoider_pf->%s()] " string, __FUNCTION__, ##__VA_ARGS__)
+ #if EVERYTHING_AVOIDER_VERBOSE
+   #define VERBOSE_PRINT PRINT
+ #else 
+   #define VERBOSE_PRINT(...)
+ #endif
  
- volatile int32_t red_count = 0;         // Total count of "red" (obstacle) pixels from depth map
- volatile int16_t obstacle_center_x = 0;   // Average x-coordinate of detected obstacle pixels
- int16_t obstacle_free_confidence = 0;
- const int16_t max_safe_confidence = 10;
+ /* ---------------- Tunable Parameters Definitions ---------------- */
+ /* These definitions resolve the undefined reference errors from settings */
+ float maxAngleDegrees = 30.0f;  // Maximum heading adjustment in degrees
+ float moveDistance = 1.5f;      // Forward move distance in SAFE state
+ float fallbackDistance = 1.0f;  // Forward move distance in OUT_OF_BOUNDS state
  
- enum navigation_state_t {
-   SAFE,
-   OBSTACLE_FOUND,
-   SEARCH_FOR_SAFE_HEADING,
-   OUT_OF_BOUNDS
- };
- enum navigation_state_t navigation_state = SAFE;
+ /* ---------------- Global Variables for Drone Navigation ---------------- */
+ // Use the typedef from the header
+ navigation_state_t navigation_state = SAFE;
  
  /* ---------------- Global Variables for ONNX Runtime ---------------- */
  static const OrtApi* g_ort = NULL;
@@ -56,330 +53,350 @@
  static OrtSession* g_session = NULL;
  static OrtSessionOptions* g_session_options = NULL;
  
- /* ---------------- Global Variable for Video Frame ---------------- */
- // Pointer to the most recent camera frame (in UYVY format)
+ /* Global variables for frame dimensions */
+ static int stored_width = 0;
+ static int stored_height = 0;
+ 
+ /* ---------------- Global Variables for Video Handling ---------------- */
+ static pthread_mutex_t video_frame_mutex;
  static struct image_t *latest_frame = NULL;
  
  /* ---------------- Video Callback Function ---------------- */
- /*
-  * video_callback()
-  * Called whenever a new video frame is available.
-  * The expected function signature is:
-  *   struct image_t *func(struct image_t *img, unsigned char id);
-  * We store the pointer to the latest frame and return the image.
-  */
  static struct image_t *video_callback(struct image_t *img, unsigned char id) {
-     (void)id;  // Unused parameter
+     (void)id;
+     pthread_mutex_lock(&video_frame_mutex);
      latest_frame = img;
-     return img;  // Pass the frame along for further processing if needed.
+     stored_width = img->w;
+     stored_height = img->h;
+     pthread_mutex_unlock(&video_frame_mutex);
+     //VERBOSE_PRINT("Received frame %p with dimensions %d x %d\n", img, img->w, img->h);
+     return img;
  }
  
- /*
-  * init_video_callback()
-  * Registers the video callback with the front camera.
-  */
  static void init_video_callback(void) {
-     // cv_add_to_device expects a function with signature: 
-     //   struct image_t *(*cv_function)(struct image_t *, unsigned char)
-     cv_add_to_device(&front_camera, video_callback, 20, 0); // 20 FPS, id = 0
+     cv_add_to_device(&front_camera, video_callback, 5, 0); // 20 FPS, id = 0
+     VERBOSE_PRINT("Video callback registered for front camera.\n");
  }
  
  /* ---------------- ONNX Model Loading ---------------- */
- /*
-  * load_depth_model()
-  * Loads the ONNX model from the specified file path.
-  */
- void load_depth_model(const char* model_path) {
-   g_ort = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-   if (g_ort->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "depth_model", &g_env) != ORT_OK) {
-     fprintf(stderr, "Failed to create ONNX environment\n");
-     exit(1);
-   }
-   if (g_ort->CreateSessionOptions(&g_session_options) != ORT_OK) {
-     fprintf(stderr, "Failed to create ONNX session options\n");
-     exit(1);
-   }
-   if (g_ort->CreateSession(g_env, model_path, g_session_options, &g_session) != ORT_OK) {
-     fprintf(stderr, "Failed to create ONNX session\n");
-     exit(1);
-   }
+ static void load_depth_model(const char* model_path) {
+     g_ort = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+     if (g_ort->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "depth_model", &g_env) != ORT_OK) {
+       VERBOSE_PRINT("Failed to create ONNX environment\n");
+       exit(1);
+     }
+     VERBOSE_PRINT("ONNX environment created.\n");
+     
+     if (g_ort->CreateSessionOptions(&g_session_options) != ORT_OK) {
+       VERBOSE_PRINT("Failed to create ONNX session options\n");
+       exit(1);
+     }
+     VERBOSE_PRINT("ONNX session options created.\n");
+     
+     if (g_ort->CreateSession(g_env, model_path, g_session_options, &g_session) != ORT_OK) {
+       VERBOSE_PRINT("Failed to create ONNX session\n");
+       exit(1);
+     }
+     VERBOSE_PRINT("ONNX session created using model at %s\n", model_path);
  }
  
- /* ---------------- Camera Image Acquisition ---------------- */
- /*
-  * get_camera_image_normalized()
-  * Converts the latest front-camera image (in UYVY format) into a normalized float tensor.
-  * The output tensor has shape: [1, 3, 130, 60] (batch, channels, height, width),
-  * where both dimensions are the original dimensions divided by 4 (e.g., from 240×520 to 60×130).
-  * We extract the luminance (Y) channel and then downscale the image using nearest-neighbor interpolation.
-  */
- void get_camera_image_normalized(float* buffer) {
-     const int width_out = 60;   // target width: original width / 4 (e.g., 240/4)
-     const int height_out = 130; // target height: original height / 4 (e.g., 520/4)
-     const int output_elements = 1 * 3 * height_out * width_out;
- 
-     if (latest_frame == NULL) {
-         for (int i = 0; i < output_elements; i++) {
-             buffer[i] = 0.0f;
-         }
-         return;
-     }
-     
-     int width_in = latest_frame->w;    // e.g., 240
-     int height_in = latest_frame->h;   // e.g., 520
-     int n_pixels = width_in * height_in;
-     
-     uint8_t* gray = (uint8_t*)malloc(n_pixels * sizeof(uint8_t));
-     if (gray == NULL) {
-         for (int i = 0; i < output_elements; i++) {
-             buffer[i] = 0.0f;
-         }
-         return;
-     }
-     
-     // Cast the buffer pointer to uint8_t*
-     uint8_t* data = (uint8_t*)latest_frame->buf;
-     int group_count = n_pixels / 2;
-     for (int i = 0; i < group_count; i++) {
-         int base = i * 4;
-         gray[2 * i]     = data[base + 1]; // Y for first pixel
-         gray[2 * i + 1] = data[base + 3]; // Y for second pixel
-     }
-     
-     // Downscale using nearest-neighbor interpolation.
-     float scale_x = (float)width_in / width_out;
-     float scale_y = (float)height_in / height_out;
-     
-     int out_index = 0;
-     for (int row = 0; row < height_out; row++) {
-         int in_y = (int)floor(row * scale_y);
-         if (in_y >= height_in) in_y = height_in - 1;
-         for (int col = 0; col < width_out; col++) {
-             int in_x = (int)floor(col * scale_x);
-             if (in_x >= width_in) in_x = width_in - 1;
-             uint8_t pixel_val = gray[in_y * width_in + in_x];
-             float norm = pixel_val / 255.0f;
-             // Replicate the normalized value into 3 channels (R, G, B).
-             buffer[out_index++] = norm;
-             buffer[out_index++] = norm;
-             buffer[out_index++] = norm;
-         }
-     }
-     
-     free(gray);
- }
- 
- /* ---------------- ONNX Inference ---------------- */
+    /* ---------------- Modified Image Normalization ---------------- */
+    /*
+    * get_camera_image_normalized()
+    *
+    * Converts the latest front-camera image (in UYVY format) into a normalized float tensor.
+    * New pipeline:
+    *   1. Resize image to 60x130.
+    *   2. Crop off the left 20 columns (from the 60-column image) to yield a 40x130 image.
+    *
+    * The output tensor has shape [1, 3, NN_HEIGHT, NN_FINAL_WIDTH].
+    */
+    static void get_camera_image_normalized(float* final_buffer) {
+        const int intermediate_width = NN_INTERMEDIATE_WIDTH; // 60
+        const int height_out = NN_HEIGHT;                     // 130
+        const int final_width = NN_FINAL_WIDTH;               // 40
+        const int intermediate_elements = 1 * 3 * height_out * intermediate_width;
+        const int final_elements = 1 * 3 * height_out * final_width;
+        
+        pthread_mutex_lock(&video_frame_mutex);
+        struct image_t *frame = latest_frame;
+        int width_in = stored_width;
+        int height_in = stored_height;
+        pthread_mutex_unlock(&video_frame_mutex);
+
+        VERBOSE_PRINT("get_camera_image_normalized: Using input dimensions %d x %d\n", width_in, height_in);
+        
+        if (frame == NULL || frame->buf == NULL) {
+            VERBOSE_PRINT("Error: No valid frame or frame->buf is NULL\n");
+            for (int i = 0; i < final_elements; i++) {
+                final_buffer[i] = 0.0f;
+            }
+            return;
+        }
+        
+        // For UYVY, expected buffer size is width_in * height_in * 2 bytes.
+        int expected_buffer_size = width_in * height_in * 2;
+        VERBOSE_PRINT("Expected buffer size (in bytes): %d\n", expected_buffer_size);
+        
+        // Since our image_t doesn't have a buf_len, we assume the size is as expected.
+        int actual_buffer_size = expected_buffer_size;
+        
+        // Cast frame->buf to uint8_t pointer.
+        uint8_t *buf = (uint8_t *)frame->buf;
+        
+        // For debugging, only copy a small portion of the buffer (e.g., 1024 bytes)
+        int debug_copy_size = 1024;
+        if (expected_buffer_size < debug_copy_size)
+            debug_copy_size = expected_buffer_size;
+        
+        uint8_t *local_buf = (uint8_t *)malloc(debug_copy_size);
+        if (local_buf == NULL) {
+            VERBOSE_PRINT("Failed to allocate local buffer for debug copy.\n");
+            for (int i = 0; i < final_elements; i++) {
+                final_buffer[i] = 0.0f;
+            }
+            return;
+        }
+        
+        memcpy(local_buf, buf, debug_copy_size);
+        VERBOSE_PRINT("Copied %d bytes from frame->buf to local buffer for debugging.\n", debug_copy_size);
+        
+        // Print the first 32 bytes of the local buffer.
+        char hex_str[256] = {0};
+        int print_len = 32;
+        if (debug_copy_size < print_len)
+            print_len = debug_copy_size;
+        for (int i = 0; i < print_len; i++) {
+            char temp[4];
+            sprintf(temp, "%02x ", local_buf[i]);
+            strcat(hex_str, temp);
+        }
+        VERBOSE_PRINT("First 32 bytes of local buffer: %s\n", hex_str);
+        
+        // Compute average values over the debug block (each group of 4 bytes represents two pixels: [U, Y, V, Y]).
+        int num_groups = debug_copy_size / 4;
+        unsigned long long sum_U = 0, sum_Y1 = 0, sum_V = 0, sum_Y2 = 0;
+        for (int i = 0; i < num_groups; i++) {
+            int base = i * 4;
+            if (base + 3 >= debug_copy_size)
+                break;
+            sum_U  += local_buf[base];
+            sum_Y1 += local_buf[base + 1];
+            sum_V  += local_buf[base + 2];
+            sum_Y2 += local_buf[base + 3];
+        }
+        double avg_U = sum_U / (double)num_groups;
+        double avg_Y1 = sum_Y1 / (double)num_groups;
+        double avg_V = sum_V / (double)num_groups;
+        double avg_Y2 = sum_Y2 / (double)num_groups;
+        VERBOSE_PRINT("Debug Averages over first %d groups - Avg U: %f, Avg Y1: %f, Avg V: %f, Avg Y2: %f\n",
+                    num_groups, avg_U, avg_Y1, avg_V, avg_Y2);
+        free(local_buf);
+
+        // (If the debug copy works, you may then try processing the full buffer.)
+        // If you still get a segfault when copying more than 1024 bytes,
+        // it indicates that the frame->buf pointer isn’t valid for the full expected size.
+        // At this point, you may need to check your camera configuration or driver.
+        
+        // ... (The rest of your processing: converting UYVY to grayscale, resizing, cropping, etc.)
+    }
+
+
+
+ /* ---------------- Modified ONNX Inference ---------------- */
  /*
   * run_depth_inference()
-  * Runs the ONNX model on the normalized input tensor and writes the output depth map
-  * to output_tensor_data. Assumes input shape [1, 3, 130, 60] and output shape [1, 1, 130, 60].
-  */
- void run_depth_inference(const float* input_tensor_data, float* output_tensor_data) {
-   int width_out = 60;
-   int height_out = 130;
-   int64_t input_dims[4] = {1, 3, height_out, width_out};
-   size_t input_tensor_size = 1 * 3 * height_out * width_out;
- 
-   OrtMemoryInfo* memory_info = NULL;
-   if (g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info) != ORT_OK) {
-     fprintf(stderr, "Failed to create CPU memory info\n");
-     exit(1);
-   }
- 
-   OrtValue* input_tensor = NULL;
-   if (g_ort->CreateTensorWithDataAsOrtValue(memory_info, (void*)input_tensor_data,
-       input_tensor_size * sizeof(float), input_dims, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-       &input_tensor) != ORT_OK) {
-     fprintf(stderr, "Failed to create input tensor\n");
-     exit(1);
-   }
- 
-   const char* input_names[] = {"input"};
-   const char* output_names[] = {"output"};
- 
-   OrtValue* output_tensor = NULL;
-   if (g_ort->Run(g_session, NULL, input_names, (const OrtValue* const*)&input_tensor, 1, output_names, 1, &output_tensor) != ORT_OK) {
-     fprintf(stderr, "Failed to run inference\n");
-     exit(1);
-   }
- 
-   float* out;
-   if (g_ort->GetTensorMutableData(output_tensor, (void**)&out) != ORT_OK) {
-     fprintf(stderr, "Failed to get output tensor data\n");
-     exit(1);
-   }
-   size_t output_tensor_size = 1 * 1 * height_out * width_out;
-   memcpy(output_tensor_data, out, output_tensor_size * sizeof(float));
- 
-   g_ort->ReleaseValue(output_tensor);
-   g_ort->ReleaseValue(input_tensor);
-   g_ort->ReleaseMemoryInfo(memory_info);
- }
- 
- /* ---------------- Depth Map Processing ---------------- */
- /*
-  * process_depth_map()
-  * Captures the current camera image, runs ONNX inference to produce a depth map,
-  * and processes the depth map to update 'red_count' and 'obstacle_center_x'.
   *
-  * In this example, pixels with a depth value > 0.8 are considered obstacles.
+  * Runs the ONNX model on the normalized input tensor and writes the output to output_tensor_data.
+  * New input shape: [1, NN_HEIGHT, NN_FINAL_WIDTH, 3] i.e. [1, 130, 40, 3]
+  * New output: a single float value representing the normalized direction.
   */
- void process_depth_map(void) {
-   int width_target = 60;
-   int height_target = 130;
-   
-   size_t input_size = 1 * 3 * height_target * width_target;
-   float* input_buffer = (float*)malloc(input_size * sizeof(float));
-   size_t output_size = 1 * 1 * height_target * width_target;
-   float* output_buffer = (float*)malloc(output_size * sizeof(float));
+ static void run_depth_inference(const float* input_tensor_data, float* output_tensor_data) {
+     int height_out = NN_HEIGHT;       // 130
+     int final_width = NN_FINAL_WIDTH;   // 40
+     int64_t input_dims[4] = {1, height_out, final_width, 3};
+     size_t input_tensor_size = 1 * height_out * final_width * 3;
  
-   get_camera_image_normalized(input_buffer);
-   run_depth_inference(input_buffer, output_buffer);
+     OrtMemoryInfo* memory_info = NULL;
+     if (g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info) != ORT_OK) {
+         VERBOSE_PRINT("Failed to create CPU memory info\n");
+         exit(1);
+     }
  
-   int count = 0;
-   long sum_x = 0;
-   float threshold = 0.8f;  // Tunable threshold for obstacle detection
-   for (int y = 0; y < height_target; y++) {
-       for (int x = 0; x < width_target; x++) {
-           int index = y * width_target + x;
-           if (output_buffer[index] > threshold) {
-               count++;
-               sum_x += x;
-           }
-       }
-   }
-   red_count = count;
-   if (count > 0)
-       obstacle_center_x = (int16_t)(sum_x / count);
-   else
-       obstacle_center_x = width_target / 2;
+     OrtValue* input_tensor = NULL;
+     if (g_ort->CreateTensorWithDataAsOrtValue(memory_info, (void*)input_tensor_data,
+             input_tensor_size * sizeof(float), input_dims, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+             &input_tensor) != ORT_OK) {
+         VERBOSE_PRINT("Failed to create input tensor\n");
+         exit(1);
+     }
  
-   free(input_buffer);
-   free(output_buffer);
+     const char* input_names[] = {"input"};
+     const char* output_names[] = {"dense"};
+ 
+     OrtValue* output_tensor = NULL;
+     OrtStatus* status = g_ort->Run(g_session, NULL, input_names,
+                           (const OrtValue* const*)&input_tensor, 1, output_names, 1, &output_tensor);
+     if (status != NULL) {
+         const char* error_msg = g_ort->GetErrorMessage(status);
+         VERBOSE_PRINT("Failed to run inference: %s\n", error_msg);
+         g_ort->ReleaseStatus(status);
+         exit(1);
+     }
+ 
+     float* out;
+     if (g_ort->GetTensorMutableData(output_tensor, (void**)&out) != ORT_OK) {
+         VERBOSE_PRINT("Failed to get output tensor data\n");
+         exit(1);
+     }
+     /* New model outputs a single float value. */
+     output_tensor_data[0] = out[0];
+ 
+     VERBOSE_PRINT("Inference completed. Output value: %f\n", out[0]);
+ 
+     g_ort->ReleaseValue(output_tensor);
+     g_ort->ReleaseValue(input_tensor);
+     g_ort->ReleaseMemoryInfo(memory_info);
  }
  
- /* ---------------- Helper Functions (unchanged) ---------------- */
- float compute_repulsive_adjustment(int32_t red_threshold) {
-   if (red_count < red_threshold)
-     return 0.0f;
-   float repulsive_magnitude = ((red_count - red_threshold) * (1.0f / red_threshold));
-   float offset = (front_camera.output_size.w * 0.5f - obstacle_center_x) *
-                  (1.0f / (front_camera.output_size.w * 0.5f));
-   return k_rep * repulsive_magnitude * offset;
+ /* ---------------- New NN Output Processing ---------------- */
+ /*
+  * process_nn_output()
+  *
+  * Captures the current camera image, runs NN inference to produce a normalized direction,
+  * and returns the output value.
+  */
+ static float process_nn_output(void) {
+     int final_width = NN_FINAL_WIDTH; // 40
+     int height_out = NN_HEIGHT;         // 130
+     size_t input_size = 1 * 3 * height_out * final_width;
+     float* input_buffer = (float*)malloc(input_size * sizeof(float));
+     size_t output_size = 1;
+     float* output_buffer = (float*)malloc(output_size * sizeof(float));
+ 
+     VERBOSE_PRINT("Capturing and normalizing camera image...\n");
+     get_camera_image_normalized(input_buffer);
+     VERBOSE_PRINT("Image normalization complete.\n");
+ 
+     VERBOSE_PRINT("Running ONNX inference...\n");
+     run_depth_inference(input_buffer, output_buffer);
+     float nn_direction = output_buffer[0];
+     VERBOSE_PRINT("NN inference produced direction: %f\n", nn_direction);
+ 
+     free(input_buffer);
+     free(output_buffer);
+     return nn_direction;
  }
  
- float fallback_increment_if_no_repulsion(float repulsive_adj) {
-   return (fabsf(repulsive_adj) < 1e-3f) ? 10.0f : repulsive_adj;
+ /* ---------------- Helper Functions ---------------- */
+ /*
+  * adjust_heading()
+  *
+  * Adjusts the drone's heading by the specified degree increment.
+  */
+ static void adjust_heading(float incrementDegrees) {
+     float old_heading = stateGetNedToBodyEulers_f()->psi;
+     float new_heading = old_heading + RadOfDeg(incrementDegrees);
+     FLOAT_ANGLE_NORMALIZE(new_heading);
+     nav.heading = new_heading;
+     VERBOSE_PRINT("Heading adjusted from %f to %f (increment: %f degrees)\n", old_heading, new_heading, incrementDegrees);
  }
  
+ /* ---------------- Additional Helper Functions ---------------- */
  void increase_nav_heading(float incrementDegrees) {
-   float new_heading = stateGetNedToBodyEulers_f()->psi + RadOfDeg(incrementDegrees);
-   FLOAT_ANGLE_NORMALIZE(new_heading);
-   nav.heading = new_heading;
+     float old_heading = stateGetNedToBodyEulers_f()->psi;
+     float new_heading = old_heading + RadOfDeg(incrementDegrees);
+     FLOAT_ANGLE_NORMALIZE(new_heading);
+     nav.heading = new_heading;
+     VERBOSE_PRINT("increase_nav_heading: Changed heading from %f to %f (increment: %f degrees)\n", old_heading, new_heading, incrementDegrees);
  }
- 
+   
  void calculateForwards(struct EnuCoor_i *new_coor, float distanceMeters) {
-   const struct FloatEulers* eulers = stateGetNedToBodyEulers_f();
-   const struct EnuCoor_i* pos = stateGetPositionEnu_i();
-   float sin_h = sinf(eulers->psi);
-   float cos_h = cosf(eulers->psi);
-   new_coor->x = pos->x + POS_BFP_OF_REAL(sin_h * distanceMeters);
-   new_coor->y = pos->y + POS_BFP_OF_REAL(cos_h * distanceMeters);
+     const struct FloatEulers* eulers = stateGetNedToBodyEulers_f();
+     const struct EnuCoor_i* pos = stateGetPositionEnu_i();
+     float sin_h = sinf(eulers->psi);
+     float cos_h = cosf(eulers->psi);
+     new_coor->x = pos->x + POS_BFP_OF_REAL(sin_h * distanceMeters);
+     new_coor->y = pos->y + POS_BFP_OF_REAL(cos_h * distanceMeters);
+     VERBOSE_PRINT("calculateForwards: New coordinates calculated: x=%d, y=%d\n", new_coor->x, new_coor->y);
  }
- 
+   
  void moveWaypoint(uint8_t waypoint, const struct EnuCoor_i *new_coor) {
-   waypoint_move_xy_i(waypoint, new_coor->x, new_coor->y);
+     waypoint_move_xy_i(waypoint, new_coor->x, new_coor->y);
+     VERBOSE_PRINT("moveWaypoint: Moved waypoint %d to new coordinates: x=%d, y=%d\n", waypoint, new_coor->x, new_coor->y);
  }
- 
+   
  void moveWaypointForward(uint8_t waypoint, float distanceMeters) {
-   struct EnuCoor_i new_coor;
-   calculateForwards(&new_coor, distanceMeters);
-   moveWaypoint(waypoint, &new_coor);
+     struct EnuCoor_i new_coor;
+     calculateForwards(&new_coor, distanceMeters);
+     moveWaypoint(waypoint, &new_coor);
+     VERBOSE_PRINT("moveWaypointForward: Waypoint %d moved forward by %f meters.\n", waypoint, distanceMeters);
  }
  
- /* ---------------- Main Periodic Function ---------------- */
+ /* ---------------- Modified Main Periodic Function ---------------- */
  /*
   * everything_avoider_pf_periodic()
-  * Called periodically (e.g., at 4Hz) to:
-  *   1. Process the depth map (via ONNX inference) to update obstacle information.
-  *   2. Adjust navigation using the potential fields state machine.
+  *
+  * Called periodically to:
+  *   1. Process the NN output to update the desired direction.
+  *   2. Adjust navigation using a simplified state machine.
   */
  void everything_avoider_pf_periodic(void) {
-   if (!autopilot_in_flight())
-     return;
+     VERBOSE_PRINT("Periodic function started.\n");
+     if (!autopilot_in_flight()) {
+         VERBOSE_PRINT("Autopilot not in flight. Exiting periodic function.\n");
+         return;
+     }
  
-   process_depth_map();
+     // Obtain NN output: a normalized value [0,1]
+     float nn_direction = process_nn_output();
+     VERBOSE_PRINT("NN direction output: %f\n", nn_direction);
  
-   int width = front_camera.output_size.w;
-   int height = front_camera.output_size.h;
-   int32_t total_pixels = width * height;
-   int32_t red_threshold = (int32_t)(oa_color_count_frac * total_pixels);
+     // Map NN output to a heading adjustment.
+     float angle_adjustment = (nn_direction - 0.5f) * 2.0f * maxAngleDegrees;
+     VERBOSE_PRINT("Computed heading adjustment: %f degrees\n", angle_adjustment);
  
-   if (red_count < red_threshold) {
-     if (obstacle_free_confidence < max_safe_confidence)
-       obstacle_free_confidence++;
-   } else {
-     obstacle_free_confidence = (obstacle_free_confidence > 2) ? obstacle_free_confidence - 2 : 0;
-   }
- 
-   float moveDistance = fminf(maxDistance, 0.2f * obstacle_free_confidence);
-   float repulsive_adj = compute_repulsive_adjustment(red_threshold);
- 
-   switch (navigation_state) {
-     case SAFE:
-       increase_nav_heading(repulsive_adj);
-       moveWaypointForward(WP_TRAJECTORY, 1.5f * moveDistance);
-       if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY)))
-           navigation_state = OUT_OF_BOUNDS;
-       else if (obstacle_free_confidence == 0)
-           navigation_state = OBSTACLE_FOUND;
-       else {
+     switch (navigation_state) {
+       case SAFE:
+           VERBOSE_PRINT("State: SAFE\n");
+           adjust_heading(angle_adjustment);
+           moveWaypointForward(WP_TRAJECTORY, moveDistance);
            moveWaypointForward(WP_GOAL, moveDistance);
            moveWaypointForward(WP_RETREAT, -moveDistance);
-       }
-       break;
+           if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
+               navigation_state = OUT_OF_BOUNDS;
+               VERBOSE_PRINT("Switching state to OUT_OF_BOUNDS\n");
+           }
+           break;
  
-     case OBSTACLE_FOUND:
-       waypoint_move_here_2d(WP_GOAL);
-       waypoint_move_here_2d(WP_RETREAT);
-       waypoint_move_here_2d(WP_TRAJECTORY);
-       increase_nav_heading(repulsive_adj);
-       if (obstacle_free_confidence >= 2)
-           navigation_state = SEARCH_FOR_SAFE_HEADING;
-       break;
- 
-     case SEARCH_FOR_SAFE_HEADING:
-       increase_nav_heading(repulsive_adj);
-       if (obstacle_free_confidence >= 2)
-           navigation_state = SAFE;
-       break;
- 
-     case OUT_OF_BOUNDS:
-       increase_nav_heading(fallback_increment_if_no_repulsion(repulsive_adj));
-       moveWaypointForward(WP_TRAJECTORY, 1.5f);
-       moveWaypointForward(WP_RETREAT, -1.0f);
-       if (InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
-           obstacle_free_confidence = 0;
-           navigation_state = SEARCH_FOR_SAFE_HEADING;
-       }
-       break;
-   }
+       case OUT_OF_BOUNDS:
+           VERBOSE_PRINT("State: OUT_OF_BOUNDS\n");
+           adjust_heading((nn_direction - 0.5f) * 2.0f * (maxAngleDegrees / 2.0f));
+           moveWaypointForward(WP_TRAJECTORY, fallbackDistance);
+           if (InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
+               navigation_state = SAFE;
+               VERBOSE_PRINT("Switching state back to SAFE\n");
+           }
+           break;
+     }
  }
  
  /* ---------------- Module Initialization ---------------- */
  /*
   * everything_avoider_pf_init()
+  *
   * Initializes the module by:
   *   - Loading the ONNX model.
-  *   - Registering the video callback to capture front-camera images.
+  *   - Registering the video callback.
   *   - Setting the initial state.
   */
  void everything_avoider_pf_init(void) {
-   srand((unsigned)time(NULL));
-   load_depth_model("sw/airborne/modules/everything_avoider_pf/depth_cnn_model.onnx");  // Ensure your exported ONNX model is available at this path
-   init_video_callback();                 // Register video callback to update 'latest_frame'
-   navigation_state = SAFE;
-   obstacle_free_confidence = 0;
+     srand((unsigned)time(NULL));
+     VERBOSE_PRINT("Initializing everything_avoider_pf module...\n");
+     load_depth_model("sw/airborne/modules/everything_avoider_pf/depth_cnn_model_epoch_15.onnx");
+     pthread_mutex_init(&video_frame_mutex, NULL);
+     init_video_callback();
+     navigation_state = SAFE;
+     VERBOSE_PRINT("Module initialization complete. Navigation state set to SAFE.\n");
  }
  

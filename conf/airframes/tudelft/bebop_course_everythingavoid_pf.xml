@@ -4,38 +4,39 @@
   <description>MAVLAB Course TUDelft 2023
   </description>
 
-
   <firmware name="rotorcraft">
     <target name="ap" board="bebop">
       <define name="VIDEO_CAPTURE_PATH" value="/data/ftp/internal_000/images"/>
       <define name="LOGGER_FILE_PATH" value="/data/ftp/internal_000/log"/>
       <define name="MT9V117_TARGET_FPS" value="20"/>
       
-      <!-- Detect orange -->
-      <define name="COLOR_OBJECT_DETECTOR_LUM_MIN1" value="30"/>
-      <define name="COLOR_OBJECT_DETECTOR_LUM_MAX1" value="190"/>
-      <define name="COLOR_OBJECT_DETECTOR_CB_MIN1" value="70"/>
-      <define name="COLOR_OBJECT_DETECTOR_CB_MAX1" value="130"/>
-      <define name="COLOR_OBJECT_DETECTOR_CR_MIN1" value="150"/>
-      <define name="COLOR_OBJECT_DETECTOR_CR_MAX1" value="190"/>
+      <!-- Detect green (adjust as needed) -->
+      <define name="COLOR_OBJECT_DETECTOR_LUM_MIN1" value="80"/>
+      <define name="COLOR_OBJECT_DETECTOR_LUM_MAX1" value="110"/>
+      <define name="COLOR_OBJECT_DETECTOR_CB_MIN1"  value="80"/>
+      <define name="COLOR_OBJECT_DETECTOR_CB_MAX1"  value="90"/>
+      <define name="COLOR_OBJECT_DETECTOR_CR_MIN1"  value="115"/>
+      <define name="COLOR_OBJECT_DETECTOR_CR_MAX1"  value="130"/>
     </target>
+
     <target name="nps" board="pc">
       <module name="fdm" type="gazebo"/>
       <define name="VIDEO_CAPTURE_PATH" value="/tmp/paparazzi/images"/>
       <define name="LOGGER_FILE_PATH" value="/tmp/paparazzi/log"/>
       
-      <!-- Detect orange -->
-      <define name="COLOR_OBJECT_DETECTOR_LUM_MIN1" value="41"/>
-      <define name="COLOR_OBJECT_DETECTOR_LUM_MAX1" value="183"/>
-      <define name="COLOR_OBJECT_DETECTOR_CB_MIN1" value="53"/>
-      <define name="COLOR_OBJECT_DETECTOR_CB_MAX1" value="121"/>
-      <define name="COLOR_OBJECT_DETECTOR_CR_MIN1" value="134"/>
-      <define name="COLOR_OBJECT_DETECTOR_CR_MAX1" value="249"/>
+      <!-- Detect green (adjust as needed) -->
+      <define name="COLOR_OBJECT_DETECTOR_LUM_MIN1" value="80"/>
+      <define name="COLOR_OBJECT_DETECTOR_LUM_MAX1" value="110"/>
+      <define name="COLOR_OBJECT_DETECTOR_CB_MIN1"  value="80"/>
+      <define name="COLOR_OBJECT_DETECTOR_CB_MAX1"  value="90"/>
+      <define name="COLOR_OBJECT_DETECTOR_CR_MIN1"  value="115"/>
+      <define name="COLOR_OBJECT_DETECTOR_CR_MAX1"  value="130"/>
+
     </target>
     
     <define name="ARRIVED_AT_WAYPOINT" value="0.3"/><!-- Detect arrival at waypoint when within 0.3m -->
 
-  <!-- Subsystem section -->
+    <!-- Subsystem section -->
     <module name="telemetry" type="transparent_udp"/>
     <module name="radio_control" type="datalink"/>
     <module name="motor_mixing"/>
@@ -61,14 +62,17 @@
       <define name="VIDEO_CAPTURE_CAMERA" value="front_camera"/>
       <define name="VIDEO_CAPTURE_FPS" value="10"/>
     </module>
+
+    <!-- Use the color object detector to detect green -->
     <module name="cv_detect_color_object">
       <define name="COLOR_OBJECT_DETECTOR_CAMERA1" value="front_camera"/>
       <define name="COLOR_OBJECT_DETECTOR_FPS1" value="0"/>
       <define name="COLOR_OBJECT_DETECTOR_DRAW1" value="0"/>
     </module>
-    <module name="orange_avoider_pf">
-      <define name="ORANGE_AVOIDER_VISUAL_DETECTION_ID" value="COLOR_OBJECT_DETECTION1_ID"/>
-    </module>
+
+    <!-- Replace orange_avoider_pf with green_finder -->
+    <module name="everything_avoider_pf"/>
+
     <module name="video_rtp_stream">
       <define name="VIEWVIDEO_CAMERA" value="front_camera"/>
       <define name="VIEWVIDEO_CAMERA2" value="bottom_camera"/>
@@ -154,7 +158,7 @@
     <define name="SONAR_MAX_RANGE" value="2.2"/>
     <define name="SONAR_UPDATE_ON_AGL" value="TRUE"/>
 
-    <!-- Use GPS altitude measurments and set the R gain -->
+    <!-- Use GPS altitude measurements and set the R gain -->
     <define name="USE_GPS_ALT" value="1"/>
     <define name="VFF_R_GPS" value="0.01"/>
   </section>
@@ -235,7 +239,7 @@
   <section name="GUIDANCE_H" prefix="GUIDANCE_H_">
     <!-- Good weather -->
     <define name="MAX_BANK" value="20" unit="deg"/>
-    <define name="REF_MAX_SPEED" value="0.5" unit="m/s"/> <!-- 1m/s -->
+    <define name="REF_MAX_SPEED" value="0.5" unit="m/s"/> <!-- 0.5m/s -->
     <!-- Bad weather -->
     <!-- define name="MAX_BANK" value="32" unit="deg"/ -->
     <define name="PGAIN" value="120"/>
@@ -260,7 +264,6 @@
     <define name="MODE_MANUAL" value="AP_MODE_ATTITUDE_DIRECT"/>
     <define name="MODE_AUTO1" value="AP_MODE_ATTITUDE_Z_HOLD"/>
     <define name="MODE_AUTO2" value="AP_MODE_NAV"/>
-
     <define name="NO_RC_THRUST_LIMIT" value="TRUE"/>
   </section>
 
@@ -273,7 +276,7 @@
   </section>
   
   <section name="GCS">
-    <define name="AC_ICON"             value="quadrotor_xi"/>
+    <define name="AC_ICON" value="quadrotor_xi"/>
   </section>
 
 </airframe>

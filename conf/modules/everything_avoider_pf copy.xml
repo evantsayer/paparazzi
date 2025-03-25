@@ -1,0 +1,38 @@
+<!DOCTYPE module SYSTEM "module.dtd">
+
+<module name="everything_avoider_pf">
+  <doc>
+    <description>
+This module is an alternative to the original orange avoider for the course AE4317 Autonomous Flight of Micro Air Vehicles at TU Delft.
+It uses a neural network-based depth model (exported from PyTorch in ONNX format) to compute a depth map from the drone's front camera.
+The depth map is then processed using a potential fields method to compute a repulsive heading adjustment based on the detected number
+and location of high-valued (red) pixels, which indicate obstacles. It also moves waypoints forward when the path is clear.
+    </description>
+  </doc>
+
+  <settings>
+    <dl_settings>
+      <dl_settings name="EverythingAvoiderPF">
+         <dl_setting var="oa_color_count_frac" min="0" step="0.01" max="0.5"/>
+         <dl_setting var="maxDistance" min="0" step="0.1" max="10"/>
+         <dl_setting var="k_rep" min="0" step="0.5" max="50"/>
+      </dl_settings>
+    </dl_settings>
+  </settings>
+  
+  <dep>
+    <depends>navigation</depends>
+  </dep>
+
+  <header>
+    <file name="everything_avoider_pf.h"/>
+  </header>
+
+  <init fun="everything_avoider_pf_init()"/>
+  <periodic fun="everything_avoider_pf_periodic()" freq="4"/>
+
+  <makefile target="ap|nps">
+    <file name="everything_avoider_pf.c"/>
+  </makefile>
+</module>
+

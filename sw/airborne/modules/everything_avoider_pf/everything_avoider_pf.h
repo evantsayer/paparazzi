@@ -6,39 +6,45 @@
  */
 /**
  * @file "modules/everything_avoider_pf/everything_avoider_pf.h"
- * @author Erik Stuttaford
+ * @brief Simplified potential fields based obstacle avoidance with NN integration.
  *
- * Example implementation of potential fields for obstacle avoidance.
- * This module now integrates a neural network depth model (exported from PyTorch as "depth_model.onnx")
- * to compute a depth map from the drone's front camera. The depth map is processed to detect obstacles
- * by counting high-valued (red) pixels. The avoidance logic is based on potential fields.
+ * This module uses a neural network-based depth model (exported from PyTorch in ONNX format)
+ * to compute a normalized direction value from the drone's front camera. The image is first
+ * resized to 60x130 and then cropped (removing the left 20 columns) to yield a final input size
+ * of 40x130. The NN outputs a value in [0,1] representing the desired direction
+ * (0 = far left, 0.5 = straight ahead, 1 = far right). This value is used to adjust the drone's
+ * heading and update its waypoints using a simplified state machine.
  */
 
  #ifndef EVERYTHING_AVOIDER_PF_H
  #define EVERYTHING_AVOIDER_PF_H
-  
- // Include necessary libraries
+ 
  #include "state.h"
  #include "generated/airframe.h"
-  
- // Settings (these are linked to XML settings for tuning)
- // Note: oa_color_count_frac now represents the threshold fraction for red pixel detection
- // from the NN-generated depth map (instead of solely detecting orange pixels).
- extern float oa_color_count_frac;  // Threshold fraction for red pixel detection
- extern float maxDistance;          // Max waypoint movement distance
- extern float k_rep;                // Gain factor for repulsive force computation
-  
- // Functions to be used externally
- extern void everything_avoider_pf_init(void);     // Initialization function
- extern void everything_avoider_pf_periodic(void);  // Periodic function for control logic
+ #include "firmwares/rotorcraft/navigation.h"  // For moveWaypointForward declaration
  
- // Function prototypes
+ /* Tunable Parameters (adjustable via settings XML) */
+ extern float maxAngleDegrees;  // Maximum heading adjustment in degrees
+ extern float moveDistance;     // Forward move distance in SAFE state
+ extern float fallbackDistance; // Forward move distance in OUT_OF_BOUNDS state
+ 
+ /* NN input dimensions (constants) */
+ #define NN_INTERMEDIATE_WIDTH 60   // Image width after initial resize
+ #define NN_FINAL_WIDTH        40   // Final image width after cropping left part
+ #define NN_HEIGHT            130   // Image height (remains unchanged)
+ 
+ /* Module State Enumeration */
+ typedef enum {
+   SAFE,
+   OUT_OF_BOUNDS
+ } navigation_state_t;
+ 
+ /* External Functions for Module Control */
  void everything_avoider_pf_init(void);
  void everything_avoider_pf_periodic(void);
- float compute_repulsive_adjustment(int32_t red_threshold);
- float fallback_increment_if_no_repulsion(float repulsive_adj);
- void increase_nav_heading(float incrementDegrees);
- void moveWaypointForward(uint8_t waypoint, float distanceMeters);
-  
+ 
+ /* External Function from navigation (if not already declared elsewhere) */
+ extern void moveWaypointForward(uint8_t waypoint, float distanceMeters);
+ 
  #endif /* EVERYTHING_AVOIDER_PF_H */
  

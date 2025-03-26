@@ -30,7 +30,7 @@ which is mapped to a heading adjustment and used to update the drone's waypoints
   </header>
 
   <init fun="everything_avoider_pf_init()"/>
-  <periodic fun="everything_avoider_pf_periodic()" freq="4"/>
+  <periodic fun="everything_avoider_pf_periodic()" freq="0.1"/>
 
   <makefile target="ap|nps">
     <file name="everything_avoider_pf.c"/>

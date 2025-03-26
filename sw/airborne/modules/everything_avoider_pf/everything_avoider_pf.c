@@ -39,7 +39,7 @@
  
  /* ---------------- Tunable Parameters Definitions ---------------- */
  /* These definitions resolve the undefined reference errors from settings */
- float maxAngleDegrees = 30.0f;  // Maximum heading adjustment in degrees
+ float maxAngleDegrees = 15.0f;  // Maximum heading adjustment in degrees
  float moveDistance = 1.5f;      // Forward move distance in SAFE state
  float fallbackDistance = 1.0f;  // Forward move distance in OUT_OF_BOUNDS state
  
@@ -112,9 +112,11 @@
     * The output tensor has shape [1, 3, NN_HEIGHT, NN_FINAL_WIDTH].
     */
     static void get_camera_image_normalized(float* final_buffer) {
-        const int intermediate_width = NN_INTERMEDIATE_WIDTH; // 60
-        const int height_out = NN_HEIGHT;                     // 130
-        const int final_width = NN_FINAL_WIDTH;               // 40
+        // Intermediate dimensions (before cropping)
+        const int intermediate_width = NN_INTERMEDIATE_WIDTH; // e.g. 60
+        const int height_out = NN_HEIGHT;                     // e.g. 130
+        // Final dimensions after cropping (if desired)
+        const int final_width = NN_FINAL_WIDTH;               // e.g. 40
         const int intermediate_elements = 1 * 3 * height_out * intermediate_width;
         const int final_elements = 1 * 3 * height_out * final_width;
         
@@ -123,7 +125,7 @@
         int width_in = stored_width;
         int height_in = stored_height;
         pthread_mutex_unlock(&video_frame_mutex);
-
+        
         VERBOSE_PRINT("get_camera_image_normalized: Using input dimensions %d x %d\n", width_in, height_in);
         
         if (frame == NULL || frame->buf == NULL) {
@@ -134,51 +136,57 @@
             return;
         }
         
-        // For UYVY, expected buffer size is width_in * height_in * 2 bytes.
+        // For UYVY images (IMAGE_YUV422), the expected size is width_in * height_in * 2 bytes.
         int expected_buffer_size = width_in * height_in * 2;
-        VERBOSE_PRINT("Expected buffer size (in bytes): %d\n", expected_buffer_size);
+        uint32_t actual_buffer_size = frame->buf_size;
+        VERBOSE_PRINT("Expected buffer size (in bytes): %d, Actual buffer size: %d\n",
+                    expected_buffer_size, actual_buffer_size);
         
-        // Since our image_t doesn't have a buf_len, we assume the size is as expected.
-        int actual_buffer_size = expected_buffer_size;
-        
-        // Cast frame->buf to uint8_t pointer.
-        uint8_t *buf = (uint8_t *)frame->buf;
-        
-        // For debugging, only copy a small portion of the buffer (e.g., 1024 bytes)
-        int debug_copy_size = 1024;
-        if (expected_buffer_size < debug_copy_size)
-            debug_copy_size = expected_buffer_size;
-        
-        uint8_t *local_buf = (uint8_t *)malloc(debug_copy_size);
-        if (local_buf == NULL) {
-            VERBOSE_PRINT("Failed to allocate local buffer for debug copy.\n");
+        if (actual_buffer_size < expected_buffer_size) {
+            VERBOSE_PRINT("Error: Actual buffer size is smaller than expected!\n");
             for (int i = 0; i < final_elements; i++) {
                 final_buffer[i] = 0.0f;
             }
             return;
         }
         
-        memcpy(local_buf, buf, debug_copy_size);
-        VERBOSE_PRINT("Copied %d bytes from frame->buf to local buffer for debugging.\n", debug_copy_size);
+        // Cast the buffer to a uint8_t pointer.
+        uint8_t *buf = (uint8_t *)frame->buf;
         
-        // Print the first 32 bytes of the local buffer.
-        char hex_str[256] = {0};
-        int print_len = 32;
-        if (debug_copy_size < print_len)
-            print_len = debug_copy_size;
-        for (int i = 0; i < print_len; i++) {
-            char temp[4];
-            sprintf(temp, "%02x ", local_buf[i]);
-            strcat(hex_str, temp);
+        // Allocate a local copy of the full buffer.
+        uint8_t *local_buf = (uint8_t *)malloc(expected_buffer_size);
+        if (local_buf == NULL) {
+            VERBOSE_PRINT("Failed to allocate local buffer for full copy.\n");
+            for (int i = 0; i < final_elements; i++) {
+                final_buffer[i] = 0.0f;
+            }
+            return;
         }
-        VERBOSE_PRINT("First 32 bytes of local buffer: %s\n", hex_str);
+        memcpy(local_buf, buf, expected_buffer_size);
+        VERBOSE_PRINT("Copied full buffer (%d bytes) from frame->buf to local buffer.\n", expected_buffer_size);
         
-        // Compute average values over the debug block (each group of 4 bytes represents two pixels: [U, Y, V, Y]).
-        int num_groups = debug_copy_size / 4;
+        // Debug: Print first 32 bytes from the local buffer.
+        {
+            char hex_str[256] = {0};
+            int print_len = 32;
+            if (print_len > expected_buffer_size)
+                print_len = expected_buffer_size;
+            for (int i = 0; i < print_len; i++) {
+                char temp[4];
+                sprintf(temp, "%02x ", local_buf[i]);
+                strcat(hex_str, temp);
+            }
+            VERBOSE_PRINT("First 32 bytes of local buffer: %s\n", hex_str);
+        }
+        
+        // Compute average values from the UYVY data.
+        // Each 4-byte group represents two pixels: [U, Y, V, Y].
+        int total_pixels = width_in * height_in;
+        int num_groups = total_pixels / 2;
         unsigned long long sum_U = 0, sum_Y1 = 0, sum_V = 0, sum_Y2 = 0;
         for (int i = 0; i < num_groups; i++) {
             int base = i * 4;
-            if (base + 3 >= debug_copy_size)
+            if (base + 3 >= expected_buffer_size)
                 break;
             sum_U  += local_buf[base];
             sum_Y1 += local_buf[base + 1];
@@ -189,17 +197,85 @@
         double avg_Y1 = sum_Y1 / (double)num_groups;
         double avg_V = sum_V / (double)num_groups;
         double avg_Y2 = sum_Y2 / (double)num_groups;
-        VERBOSE_PRINT("Debug Averages over first %d groups - Avg U: %f, Avg Y1: %f, Avg V: %f, Avg Y2: %f\n",
-                    num_groups, avg_U, avg_Y1, avg_V, avg_Y2);
-        free(local_buf);
-
-        // (If the debug copy works, you may then try processing the full buffer.)
-        // If you still get a segfault when copying more than 1024 bytes,
-        // it indicates that the frame->buf pointer isn’t valid for the full expected size.
-        // At this point, you may need to check your camera configuration or driver.
+        VERBOSE_PRINT("Full buffer Averages - Avg U: %f, Avg Y1: %f, Avg V: %f, Avg Y2: %f\n",
+                    avg_U, avg_Y1, avg_V, avg_Y2);
         
-        // ... (The rest of your processing: converting UYVY to grayscale, resizing, cropping, etc.)
+        if (avg_Y1 < 10.0 && avg_Y2 < 10.0) {
+            VERBOSE_PRINT("Warning: Both average Y values are very low (image may be underexposed or not in UYVY format).\n");
+        }
+        
+        // Convert the full UYVY image to a grayscale image by extracting the Y values.
+        int n_pixels = width_in * height_in;
+        uint8_t *gray = (uint8_t*)malloc(n_pixels * sizeof(uint8_t));
+        if (gray == NULL) {
+            VERBOSE_PRINT("Failed to allocate gray buffer.\n");
+            free(local_buf);
+            for (int i = 0; i < final_elements; i++) {
+                final_buffer[i] = 0.0f;
+            }
+            return;
+        }
+        for (int i = 0; i < num_groups; i++) {
+            int base = i * 4;
+            if (base + 3 >= expected_buffer_size)
+                break;
+            gray[2 * i]     = local_buf[base + 1];  // Y value from first pixel
+            gray[2 * i + 1] = local_buf[base + 3];  // Y value from second pixel
+        }
+        VERBOSE_PRINT("Converted full UYVY buffer to grayscale image.\n");
+        free(local_buf);
+        
+        // Resize the grayscale image to an intermediate resolution of NN_INTERMEDIATE_WIDTH x NN_HEIGHT.
+        float* intermediate_buffer = (float*)malloc(intermediate_elements * sizeof(float));
+        if (intermediate_buffer == NULL) {
+            VERBOSE_PRINT("Failed to allocate intermediate buffer.\n");
+            free(gray);
+            for (int i = 0; i < final_elements; i++) {
+                final_buffer[i] = 0.0f;
+            }
+            return;
+        }
+        float scale_x = (float)width_in / (float)NN_INTERMEDIATE_WIDTH;
+        float scale_y = (float)height_in / (float)NN_HEIGHT;
+        int out_index = 0;
+        for (int row = 0; row < NN_HEIGHT; row++) {
+            int in_y = (int)floor(row * scale_y);
+            if (in_y >= height_in)
+                in_y = height_in - 1;
+            for (int col = 0; col < NN_INTERMEDIATE_WIDTH; col++) {
+                int in_x = (int)floor(col * scale_x);
+                if (in_x >= width_in)
+                    in_x = width_in - 1;
+                uint8_t pixel_val = gray[in_y * width_in + in_x];
+                float norm = pixel_val / 255.0f;
+                intermediate_buffer[out_index++] = norm;
+                intermediate_buffer[out_index++] = norm;
+                intermediate_buffer[out_index++] = norm;
+            }
+        }
+        free(gray);
+        VERBOSE_PRINT("Resized grayscale image to intermediate dimensions: %dx%d.\n", NN_INTERMEDIATE_WIDTH, NN_HEIGHT);
+        
+        // Crop the intermediate image to the final resolution.
+        // For example, if cropping off the left part to obtain NN_FINAL_WIDTH columns.
+        for (int row = 0; row < NN_HEIGHT; row++) {
+            for (int col = 0; col < NN_FINAL_WIDTH; col++) {
+                // Adjust the cropping offset as needed.
+                int src_col = col + (NN_INTERMEDIATE_WIDTH - NN_FINAL_WIDTH); // cropping from left side
+                int src_index = (row * NN_INTERMEDIATE_WIDTH + src_col) * 3;
+                int dst_index = (row * NN_FINAL_WIDTH + col) * 3;
+                final_buffer[dst_index]     = intermediate_buffer[src_index];
+                final_buffer[dst_index + 1] = intermediate_buffer[src_index + 1];
+                final_buffer[dst_index + 2] = intermediate_buffer[src_index + 2];
+            }
+        }
+        free(intermediate_buffer);
+        VERBOSE_PRINT("Cropped resized image to final dimensions: %dx%d.\n", NN_FINAL_WIDTH, NN_HEIGHT);
     }
+
+
+
+
 
 
 
@@ -341,45 +417,50 @@
   *   1. Process the NN output to update the desired direction.
   *   2. Adjust navigation using a simplified state machine.
   */
- void everything_avoider_pf_periodic(void) {
-     VERBOSE_PRINT("Periodic function started.\n");
-     if (!autopilot_in_flight()) {
-         VERBOSE_PRINT("Autopilot not in flight. Exiting periodic function.\n");
-         return;
-     }
- 
-     // Obtain NN output: a normalized value [0,1]
-     float nn_direction = process_nn_output();
-     VERBOSE_PRINT("NN direction output: %f\n", nn_direction);
- 
-     // Map NN output to a heading adjustment.
-     float angle_adjustment = (nn_direction - 0.5f) * 2.0f * maxAngleDegrees;
-     VERBOSE_PRINT("Computed heading adjustment: %f degrees\n", angle_adjustment);
- 
-     switch (navigation_state) {
-       case SAFE:
-           VERBOSE_PRINT("State: SAFE\n");
-           adjust_heading(angle_adjustment);
-           moveWaypointForward(WP_TRAJECTORY, moveDistance);
-           moveWaypointForward(WP_GOAL, moveDistance);
-           moveWaypointForward(WP_RETREAT, -moveDistance);
-           if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
-               navigation_state = OUT_OF_BOUNDS;
-               VERBOSE_PRINT("Switching state to OUT_OF_BOUNDS\n");
-           }
-           break;
- 
-       case OUT_OF_BOUNDS:
-           VERBOSE_PRINT("State: OUT_OF_BOUNDS\n");
-           adjust_heading((nn_direction - 0.5f) * 2.0f * (maxAngleDegrees / 2.0f));
-           moveWaypointForward(WP_TRAJECTORY, fallbackDistance);
-           if (InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
-               navigation_state = SAFE;
-               VERBOSE_PRINT("Switching state back to SAFE\n");
-           }
-           break;
-     }
- }
+    void everything_avoider_pf_periodic(void) {
+        VERBOSE_PRINT("Periodic function started.\n");
+        if (!autopilot_in_flight()) {
+            VERBOSE_PRINT("Autopilot not in flight. Exiting periodic function.\n");
+            return;
+        }
+
+        // Obtain NN output: a normalized value [0,1]
+        float nn_direction = process_nn_output();
+        VERBOSE_PRINT("NN direction output: %f\n", nn_direction);
+
+        // In SAFE mode, use the NN output to compute a heading adjustment.
+        float angle_adjustment = (nn_direction - 0.5f) * 2.0f * maxAngleDegrees;
+        VERBOSE_PRINT("Computed heading adjustment (SAFE): %f degrees\n", angle_adjustment);
+
+        switch (navigation_state) {
+            case SAFE:
+                VERBOSE_PRINT("State: SAFE\n");
+                adjust_heading(angle_adjustment);
+                moveWaypointForward(WP_TRAJECTORY, moveDistance);
+                moveWaypointForward(WP_GOAL, moveDistance);
+                moveWaypointForward(WP_RETREAT, -moveDistance);
+                // If the trajectory waypoint is out of bounds, switch to OUT_OF_BOUNDS state.
+                if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
+                    navigation_state = OUT_OF_BOUNDS;
+                    VERBOSE_PRINT("Switching state to OUT_OF_BOUNDS\n");
+                }
+                break;
+
+            case OUT_OF_BOUNDS:
+                VERBOSE_PRINT("State: OUT_OF_BOUNDS\n");
+                // In OUT_OF_BOUNDS, rotate by a fixed 15 degrees to the right.
+                adjust_heading(15.0f);
+                moveWaypointForward(WP_TRAJECTORY, fallbackDistance);
+                if (InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
+                    navigation_state = SAFE;
+                    VERBOSE_PRINT("Rotated 15°: now inside obstacle zone, switching back to SAFE\n");
+                } else {
+                    VERBOSE_PRINT("Rotated 15°: still out-of-bounds, remaining in OUT_OF_BOUNDS\n");
+                }
+                break;
+        }
+    }
+
  
  /* ---------------- Module Initialization ---------------- */
  /*

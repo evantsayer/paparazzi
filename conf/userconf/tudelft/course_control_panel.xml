@@ -123,5 +123,89 @@
         <arg flag="-le" constant="far"/>
       </program>
     </session>
+    <session name="flightgoosd">
+      <program name="Data Link">
+        <arg flag="-udp"/>
+      </program>
+      <program name="Server"/>
+      <program name="GCS">
+        <arg flag="-speech"/>
+      </program>
+      <program name="Joystick">
+        <arg flag="-ac" constant="bebop_orange_avoid_pf"/>
+        <arg flag="sm600.xml"/>
+        <arg flag="-d" constant="0"/>
+      </program>
+      <program name="NatNet3">
+        <arg flag="-ac" constant="12"/>
+        <arg flag="44"/>
+        <arg flag="-xa" constant="57"/>
+        <arg flag="-an" constant="far"/>
+        <arg flag="-le" constant="far"/>
+      </program>
+    </session>
+    <session name="hello!">
+      <program name="Data Link">
+        <arg flag="-udp"/>
+      </program>
+      <program name="Server"/>
+      <program name="GCS">
+        <arg flag="-speech"/>
+      </program>
+      <program name="Joystick">
+        <arg flag="-ac" constant="bebop_orange_avoid"/>
+        <arg flag="sm600.xml"/>
+        <arg flag="-d" constant="1"/>
+      </program>
+      <program name="NatNet3">
+        <arg flag="-ac" constant="11"/>
+        <arg flag="42"/>
+        <arg flag="-xa" constant="57"/>
+        <arg flag="-an" constant="far"/>
+        <arg flag="-le" constant="far"/>
+      </program>
+    </session>
+    <session name="run_this_good">
+      <program name="Data Link">
+        <arg flag="-udp"/>
+      </program>
+      <program name="Server"/>
+      <program name="GCS">
+        <arg flag="-speech"/>
+      </program>
+      <program name="Joystick">
+        <arg flag="-ac" constant="bebop_orange_avoid"/>
+        <arg flag="sm600.xml"/>
+        <arg flag="-d" constant="1"/>
+      </program>
+      <program name="NatNet3">
+        <arg flag="-ac" constant="11"/>
+        <arg flag="42"/>
+        <arg flag="-xa" constant="57"/>
+        <arg flag="-an" constant="far"/>
+        <arg flag="-le" constant="far"/>
+      </program>
+    </session>
+    <session name="latest">
+      <program name="Data Link">
+        <arg flag="-udp"/>
+      </program>
+      <program name="Server"/>
+      <program name="GCS">
+        <arg flag="-speech"/>
+      </program>
+      <program name="Joystick">
+        <arg flag="-ac" constant="bebop_orange_avoid"/>
+        <arg flag="sm600.xml"/>
+        <arg flag="-d" constant="1"/>
+      </program>
+      <program name="NatNet3">
+        <arg flag="-ac" constant="1"/>
+        <arg flag="48"/>
+        <arg flag="-xa" constant="57"/>
+        <arg flag="-an" constant="far"/>
+        <arg flag="-le" constant="far"/>
+      </program>
+    </session>
   </section>
 </control_panel>

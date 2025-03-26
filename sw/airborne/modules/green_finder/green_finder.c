@@ -11,9 +11,9 @@
 #include "generated/flight_plan.h"
 
 // Tuning parameters for green detection (attraction)
-float k_attr = 40.0f;               // Attractive gain factor
-float maxDistance = 1.80f;           // Maximum waypoint movement distance
-float gf_green_count_frac = 0.12f;   // Fraction of pixels that must be green to be considered safe
+float k_attr = 45.0f;               // Attractive gain factor
+float maxDistance = 2.5f;           // Maximum waypoint movement distance
+float gf_green_count_frac = 0.13f;   // Fraction of pixels that must be green to be considered safe
 
 // Global variables for detection
 volatile int32_t color_count = 0;
@@ -33,6 +33,7 @@ enum navigation_state_t navigation_state = GREEN_SAFE;
 
 // Planning update counter: Only update planning every 3 cycles (~1.33Hz if periodic is 4Hz)
 static int planning_counter = 1;
+static int waypoint_update_counter = 0; // Counter to track updates since the last waypoint change
 
 // ABI callback for visual green detection
 static abi_event color_detection_ev;
@@ -60,80 +61,102 @@ void green_finder_init(void)
 // and update waypoints/heading based on the current state.
 void green_finder_periodic(void)
 {
-  if (!autopilot_in_flight()) return;
+    if (!autopilot_in_flight()) return;
 
-  // Increase planning counter and only update every 3 cycles.
-  planning_counter++;
-  if (planning_counter < 3) {
-    return;
-  }
-  planning_counter = 0;
+    // Increase planning counter and only update every 3 cycles.
+    planning_counter++;
+    if (planning_counter < 3) {
+        return;
+    }
+    planning_counter = 0;
 
-  const int width = front_camera.output_size.w;
-  const int height = front_camera.output_size.h;
-  const int32_t total_pixels = width * height;
-  const int32_t color_threshold = (int32_t)(gf_green_count_frac * total_pixels);
+    const int width = front_camera.output_size.w;
+    const int height = front_camera.output_size.h;
+    const int32_t total_pixels = width * height;
+    const int32_t color_threshold = (int32_t)(gf_green_count_frac * total_pixels);
 
-  // Update safe confidence based on green detection (more green = safer)
-  if (color_count >= color_threshold) {
-    if (safe_confidence < max_safe_confidence) safe_confidence++;
-  } else {
-    safe_confidence = (safe_confidence > 2) ? safe_confidence - 2 : 0;
-  }
+    // Debug: Log green detection stats
+    printf("[green_finder -> green_finder_periodic()] Color count: %d, Threshold: %d, Safe confidence: %d\n", color_count, color_threshold, safe_confidence);
 
-  const float moveDistance = fminf(maxDistance, 0.2f * safe_confidence);
-  const float attractive_adj = compute_attractive_adjustment(color_threshold);
+    // Update safe confidence based on green detection
+    if (color_count >= color_threshold) {
+        if (safe_confidence < max_safe_confidence) safe_confidence++;
+    } else {
+        safe_confidence = (safe_confidence > 2) ? safe_confidence - 2 : 0;
+    }
 
-  // State Machine:
-  switch (navigation_state) {
-    case GREEN_SAFE:
-      increase_nav_heading(attractive_adj);
-      moveWaypointForward(WP_TRAJECTORY, 1.0f * moveDistance);
-      if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
-        navigation_state = OUT_OF_BOUNDS;
-      } else if (safe_confidence == 0) {
-        navigation_state = GREEN_LOST;
-      } else {
-        moveWaypointForward(WP_GOAL, moveDistance);
-        moveWaypointForward(WP_RETREAT, -moveDistance);
-      }
-      break;
+    // Debug: Log updated safe confidence
+    printf("[green_finder -> green_finder_periodic()] Updated safe confidence: %d\n", safe_confidence);
 
-    case GREEN_LOST:
-      waypoint_move_here_2d(WP_GOAL);
-      waypoint_move_here_2d(WP_RETREAT);
-      waypoint_move_here_2d(WP_TRAJECTORY);
-      // If the attractive adjustment is negligible or safe_confidence is low, do a fixed 15° rotation.
-      if (fabsf(attractive_adj) < 0.7 || safe_confidence < 2) {
-        increase_nav_heading(5.0);
-      } else {
-        increase_nav_heading(attractive_adj);
-      }
-      if (safe_confidence >= 2) navigation_state = SEARCH_FOR_GREEN_HEADING;
-      break;
-    
+    const float moveDistance = fminf(maxDistance, 0.2f * safe_confidence);
+    const float attractive_adj = compute_attractive_adjustment(color_threshold);
 
-    case SEARCH_FOR_GREEN_HEADING:
-      increase_nav_heading(attractive_adj);
-      if (safe_confidence >= 2) navigation_state = GREEN_SAFE;
-      break;
+    // Debug: Log attractive adjustment
+    printf("[green_finder -> green_finder_periodic()] Attractive adjustment: %.2f\n", attractive_adj);
 
-    case OUT_OF_BOUNDS:
-      // If the attractive adjustment is too small or safe confidence is low,
-      // perform a fixed 15° search rotation.
-      if (fabsf(attractive_adj) < 1.0f || safe_confidence < 2) {
-        increase_nav_heading(25.0f);
-      } else {
-        increase_nav_heading(attractive_adj);
-      }
-      moveWaypointForward(WP_TRAJECTORY, 1.5f);
-      moveWaypointForward(WP_RETREAT, -1.0f);
-      if (InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
-        safe_confidence = 0;
-        navigation_state = SEARCH_FOR_GREEN_HEADING;
-      }
-      break;
-  }
+    // Increment the waypoint update counter
+    waypoint_update_counter++;
+
+    // State Machine:
+    switch (navigation_state) {
+        case GREEN_SAFE:
+            printf("[green_finder -> green_finder_periodic()] State: GREEN_SAFE\n");
+            increase_nav_heading(attractive_adj);
+            moveWaypointForward(WP_TRAJECTORY, 1.0f * moveDistance);
+            waypoint_update_counter = 0; // Reset counter when a waypoint is updated
+            if (!InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
+                navigation_state = OUT_OF_BOUNDS;
+            } else if (safe_confidence == 0) {
+                navigation_state = GREEN_LOST;
+            } else {
+                moveWaypointForward(WP_GOAL, moveDistance);
+                moveWaypointForward(WP_RETREAT, -moveDistance);
+                waypoint_update_counter = 0; // Reset counter when a waypoint is updated
+            }
+            break;
+
+        case GREEN_LOST:
+            printf("[green_finder -> green_finder_periodic()] State: GREEN_LOST\n");
+            waypoint_move_here_2d(WP_GOAL);
+            waypoint_move_here_2d(WP_RETREAT);
+            waypoint_move_here_2d(WP_TRAJECTORY);
+            if (fabsf(attractive_adj) < 0.7 || safe_confidence < 2) {
+                increase_nav_heading(110.0f);
+            } else {
+                increase_nav_heading(attractive_adj);
+            }
+            if (safe_confidence >= 2) navigation_state = SEARCH_FOR_GREEN_HEADING;
+            break;
+
+        case SEARCH_FOR_GREEN_HEADING:
+            printf("[green_finder -> green_finder_periodic()] State: SEARCH_FOR_GREEN_HEADING\n");
+            increase_nav_heading(attractive_adj);
+            if (safe_confidence >= 2) navigation_state = GREEN_SAFE;
+            break;
+
+        case OUT_OF_BOUNDS:
+            printf("[green_finder -> green_finder_periodic()] State: OUT_OF_BOUNDS\n");
+            if (fabsf(attractive_adj) < 1.0f || safe_confidence < 2) {
+                if (waypoint_update_counter > 10) {
+                    printf("[green_finder -> green_finder_periodic()] Turning aggressively (110 degrees)\n");
+                    increase_nav_heading(90.0f);
+                    waypoint_update_counter = 0;
+                } else {
+                    printf("[green_finder -> green_finder_periodic()] Turning moderately (70 degrees)\n");
+                    increase_nav_heading(60.0f);
+                }
+            } else {
+                increase_nav_heading(attractive_adj);
+            }
+            moveWaypointForward(WP_TRAJECTORY, 1.5f);
+            moveWaypointForward(WP_RETREAT, -1.0f);
+            waypoint_update_counter = 0;
+            if (InsideObstacleZone(WaypointX(WP_TRAJECTORY), WaypointY(WP_TRAJECTORY))) {
+                safe_confidence = 0;
+                navigation_state = SEARCH_FOR_GREEN_HEADING;
+            }
+            break;
+    }
 }
 
 // Computes an attractive adjustment to steer the drone toward the green area.
@@ -176,8 +199,8 @@ void increase_nav_heading(float incrementDegrees)
   float current_heading = stateGetNedToBodyEulers_f()->psi;  // current heading in radians
   // Convert desired increment to radians.
   float desired_change = RadOfDeg(incrementDegrees);
-  // Clamp the heading change to a maximum value (e.g., 5 degrees per update).
-  float max_heading_change = RadOfDeg(10.0f);
+  // Increase the maximum heading change (e.g., 30 degrees per update).
+  float max_heading_change = RadOfDeg(20.0f); // 
   if (desired_change > max_heading_change)
     desired_change = max_heading_change;
   else if (desired_change < -max_heading_change)

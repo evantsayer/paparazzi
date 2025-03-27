@@ -109,9 +109,8 @@ int main()
     ocp_nlp_get(nlp_solver, "sqp_iter", &sqp_iter);
 
     quadrotor_acados_print_stats(acados_ocp_capsule);
-
-    VERBOSE_PRINT("Solver info:");
-    VERBOSE_PRINT("SQP iterations %d, minimum time for %d solve: %.3f ms, KKT: %e",
+    printf("Solver info:");
+    printf("[green_finder -> green_finder_periodic()] SQP iterations %d, minimum time for %d solve: %.3f ms, KKT: %e",
              sqp_iter, NTIMINGS, min_time * 1000, kkt_norm_inf);
 
     // Cleanup

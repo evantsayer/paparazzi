@@ -132,3 +132,16 @@ endif
 # Add ONNX Runtime include directory and link flags
 $(TARGET).CFLAGS += -I/usr/local/include
 $(TARGET).LDFLAGS += -L/usr/local/lib -lonnxruntime
+
+
+everything_avoider_pf.CPPFILES += modules/everything_avoider_pf/opencv_preprocessor.cpp
+
+everything_avoider_pf.CXXFLAGS += -I/usr/include/opencv4
+everything_avoider_pf.LDFLAGS  += -lopencv_core -lopencv_imgproc
+
+USER_CXXFLAGS += -I/usr/include/opencv4
+USER_LDFLAGS  += -lopencv_core -lopencv_imgproc
+
+$(TARGET).CXXFLAGS += -I/usr/include/opencv4
+$(TARGET).LDFLAGS  += -lopencv_core -lopencv_imgproc
+

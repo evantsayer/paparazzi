@@ -56,6 +56,7 @@
  /* Global variables for frame dimensions */
  static int stored_width = 0;
  static int stored_height = 0;
+ static int stored_type = 0;
  
  /* ---------------- Global Variables for Video Handling ---------------- */
  static pthread_mutex_t video_frame_mutex;
@@ -63,15 +64,17 @@
  
  /* ---------------- Video Callback Function ---------------- */
  static struct image_t *video_callback(struct image_t *img, unsigned char id) {
-     (void)id;
-     pthread_mutex_lock(&video_frame_mutex);
-     latest_frame = img;
-     stored_width = img->w;
-     stored_height = img->h;
-     pthread_mutex_unlock(&video_frame_mutex);
-     //VERBOSE_PRINT("Received frame %p with dimensions %d x %d\n", img, img->w, img->h);
-     return img;
- }
+    (void)id;
+    pthread_mutex_lock(&video_frame_mutex);
+    latest_frame = img;
+    stored_width = img->w;
+    stored_height = img->h;
+    stored_type = img->type;
+    pthread_mutex_unlock(&video_frame_mutex);
+    VERBOSE_PRINT("Received frame %p with dimensions %d x %d, buffer size: %d\n", 
+                  img, img->w, img->h, img->buf_size);
+    return img;
+}
  
  static void init_video_callback(void) {
      cv_add_to_device(&front_camera, video_callback, 5, 0); // 20 FPS, id = 0
@@ -124,6 +127,7 @@
         struct image_t *frame = latest_frame;
         int width_in = stored_width;
         int height_in = stored_height;
+        int type_in = stored_type;
         pthread_mutex_unlock(&video_frame_mutex);
         
         VERBOSE_PRINT("get_camera_image_normalized: Using input dimensions %d x %d\n", width_in, height_in);
@@ -138,9 +142,11 @@
         
         // For UYVY images (IMAGE_YUV422), the expected size is width_in * height_in * 2 bytes.
         int expected_buffer_size = width_in * height_in * 2;
-        uint32_t actual_buffer_size = frame->buf_size;
+        VERBOSE_PRINT("2 get_camera_image_normalized: Using input dimensions %d x %d\n", width_in, height_in);
+        VERBOSE_PRINT("type in: %d \n", type_in);
+        uint32_t *actual_buffer_size = frame->buf_size;
         VERBOSE_PRINT("Expected buffer size (in bytes): %d, Actual buffer size: %d\n",
-                    expected_buffer_size, actual_buffer_size);
+                    expected_buffer_size, &actual_buffer_size);
         
         if (actual_buffer_size < expected_buffer_size) {
             VERBOSE_PRINT("Error: Actual buffer size is smaller than expected!\n");

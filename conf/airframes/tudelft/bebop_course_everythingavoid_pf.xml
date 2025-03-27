@@ -71,12 +71,13 @@
     </module> -->
 
     <!-- Replace orange_avoider_pf with green_finder -->
+    
     <module name="everything_avoider_pf"/>
 
     <module name="video_rtp_stream">
       <define name="VIEWVIDEO_CAMERA" value="front_camera"/>
       <define name="VIEWVIDEO_CAMERA2" value="bottom_camera"/>
-      <define name="VIEWVIDEO_DOWNSIZE_FACTOR" value="1"/>
+      <define name="VIEWVIDEO_DOWNSIZE_FACTOR" value="1"/> <!-- 1 = no downsizing set to 4 for dimensions: 60 by 130 (all dimensions divided by 4) -->
       <define name="VIEWVIDEO_QUALITY_FACTOR" value="40"/>
     </module>
   </firmware>
